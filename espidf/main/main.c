@@ -28,6 +28,10 @@ static const char *TAG = "app";
 
 #define BOARD_POWER_ON_GPIO 15
 
+static wifi_station_config_t wifi_config;
+static ml_config_wifi_list_t wifi_list;
+static char wifi_ip[16];
+
 static void board_init(void) {
     gpio_config_t cfg = {
         .pin_bit_mask = 1ULL << BOARD_POWER_ON_GPIO,
@@ -56,7 +60,7 @@ static void add_wifi_network(wifi_station_config_t *config,
 static void load_wifi_config(wifi_station_config_t *config) {
     memset(config, 0, sizeof(*config));
 
-    ml_config_wifi_list_t wifi_list = {0};
+    memset(&wifi_list, 0, sizeof(wifi_list));
     wifi_list.active_idx = 0xFF;
     if (ml_config_get_wifi_list(&wifi_list) && wifi_list.count > 1) {
         for (uint8_t i = 0; i < wifi_list.count; i++) {
@@ -98,12 +102,10 @@ void app_main(void) {
              (unsigned long)esp_get_free_heap_size(),
              (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-    wifi_station_config_t wifi_config;
     load_wifi_config(&wifi_config);
     ESP_ERROR_CHECK(station_start(&wifi_config));
     ESP_ERROR_CHECK(station_wait_connected(portMAX_DELAY));
 
-    char wifi_ip[16];
     station_get_ip(wifi_ip);
 
     web_server_config_t web_config = {
