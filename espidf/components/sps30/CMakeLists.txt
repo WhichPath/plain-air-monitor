@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "src/pm_sps30.c"
+        "src/sensirion_uart_hal_espidf.c"
+        "vendor/sensirion_common.c"
+        "vendor/sensirion_shdlc.c"
+        "vendor/sensirion_streaming.c"
+        "vendor/sensirion_streaming_shdlc.c"
+        "vendor/sps30_uart.c"
+    INCLUDE_DIRS
+        "include"
+        "vendor"
+    REQUIRES
+        driver
+        esp_timer
+)

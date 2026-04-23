@@ -1,0 +1,7 @@
+.tools/
+espidf/build/
+espidf/sdkconfig
+espidf/sdkconfig.old
+espidf/sdkconfig.credentials
+*.pyc
+__pycache__/
