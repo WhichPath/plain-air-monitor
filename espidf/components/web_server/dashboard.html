@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MicroLink Sensor</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0e1116;--panel:#171c24;--line:#2a313d;--text:#edf1f7;--muted:#9aa6b2;--good:#39d98a;--warn:#ffce56;--bad:#ff6b6b;--accent:#5eb1ff}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
+    header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line);background:#111720}
+    h1{font-size:20px;margin:0;font-weight:650}.sub{color:var(--muted);font-size:13px}.wrap{max-width:1180px;margin:0 auto;padding:20px;display:grid;gap:16px}
+    .top{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;min-width:0}
+    .metric .label{color:var(--muted);font-size:12px}.metric .value{font-size:28px;font-weight:700;margin-top:6px}.metric .unit{font-size:13px;color:var(--muted);margin-left:4px}
+    .grid{display:grid;grid-template-columns:2fr 1fr;gap:16px}.chart{height:330px}.status{display:grid;gap:10px}.row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #232a34;padding:8px 0}.row:last-child{border-bottom:0}.row span:first-child{color:var(--muted)}
+    canvas{width:100%;height:100%;display:block}.pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:6px 10px;color:var(--muted);white-space:nowrap}.dot{width:8px;height:8px;border-radius:50%;background:var(--warn)}.dot.ok{background:var(--good)}.dot.bad{background:var(--bad)}
+    .table{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.small .value{font-size:20px}.foot{color:var(--muted);font-size:12px;padding-bottom:10px}
+    @media(max-width:860px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.grid{grid-template-columns:1fr}.table{grid-template-columns:repeat(2,minmax(0,1fr))}header{align-items:flex-start;flex-direction:column}.chart{height:280px}}
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>MicroLink Sensor</h1>
+      <div class="sub">SPS30 particulate sensor over Tailscale</div>
+    </div>
+    <div class="pill"><i id="dot" class="dot"></i><span id="state">starting</span></div>
+  </header>
+  <main class="wrap">
+    <section class="top">
+      <div class="card metric"><div class="label">PM2.5</div><div class="value"><span id="pm25">--</span><span class="unit">ug/m3</span></div></div>
+      <div class="card metric"><div class="label">PM10</div><div class="value"><span id="pm10">--</span><span class="unit">ug/m3</span></div></div>
+      <div class="card metric"><div class="label">PM1.0</div><div class="value"><span id="pm1">--</span><span class="unit">ug/m3</span></div></div>
+      <div class="card metric"><div class="label">Particle Size</div><div class="value"><span id="size">--</span><span class="unit">um</span></div></div>
+    </section>
+    <section class="grid">
+      <div class="card chart"><canvas id="chart"></canvas></div>
+      <div class="card status">
+        <div class="row"><span>Tailnet IP</span><b id="vpn">--</b></div>
+        <div class="row"><span>Wi-Fi RSSI</span><b id="rssi">--</b></div>
+        <div class="row"><span>Peers</span><b id="peers">--</b></div>
+        <div class="row"><span>Uptime</span><b id="uptime">--</b></div>
+        <div class="row"><span>Reads</span><b id="reads">--</b></div>
+        <div class="row"><span>Hourly</span><b id="hourly">--</b></div>
+        <div class="row"><span>Sensor</span><b id="sensor">--</b></div>
+      </div>
+    </section>
+    <section class="table">
+      <div class="card metric small"><div class="label">PM4.0</div><div class="value"><span id="pm4">--</span><span class="unit">ug/m3</span></div></div>
+      <div class="card metric small"><div class="label">NC0.5</div><div class="value"><span id="nc05">--</span><span class="unit">#/cm3</span></div></div>
+      <div class="card metric small"><div class="label">NC1.0</div><div class="value"><span id="nc10">--</span><span class="unit">#/cm3</span></div></div>
+      <div class="card metric small"><div class="label">NC2.5</div><div class="value"><span id="nc25">--</span><span class="unit">#/cm3</span></div></div>
+      <div class="card metric small"><div class="label">NC10</div><div class="value"><span id="nc100">--</span><span class="unit">#/cm3</span></div></div>
+    </section>
+    <div class="foot">HTTP port 80. Data refreshes in the browser; the device serves static HTML and JSON.</div>
+  </main>
+  <script>
+    const $=id=>document.getElementById(id),fmt=(v,d=1)=>Number.isFinite(v)?v.toFixed(d):'--';let hist=[];
+    function up(m){const ok=m.sensor&&m.sensor.state==='measuring'&&m.latest;$('dot').className='dot '+(ok?'ok':(m.sensor&&m.sensor.state==='error'?'bad':''));$('state').textContent=ok?'live':(m.sensor?m.sensor.state:'offline');
+    if(m.latest){let x=m.latest;$('pm25').textContent=fmt(x.pm2_5);$('pm10').textContent=fmt(x.pm10_0);$('pm1').textContent=fmt(x.pm1_0);$('pm4').textContent=fmt(x.pm4_0);$('size').textContent=fmt(x.typical_particle_size,2);$('nc05').textContent=fmt(x.nc0_5,0);$('nc10').textContent=fmt(x.nc1_0,0);$('nc25').textContent=fmt(x.nc2_5,0);$('nc100').textContent=fmt(x.nc10_0,0);}
+    $('vpn').textContent=m.vpn_ip||'--';$('rssi').textContent=m.wifi_rssi?m.wifi_rssi+' dBm':'--';$('peers').textContent=m.peer_count;let s=Math.floor(m.uptime_ms/1000);$('uptime').textContent=Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';$('reads').textContent=(m.sensor.read_count||0)+' / '+(m.sensor.error_count||0);$('hourly').textContent=(m.hourly?m.hourly.stored:0)+' saved';$('sensor').textContent=m.sensor.state;}
+    function pushLatest(x){if(!x||!Number.isFinite(x.timestamp_ms))return;let last=hist[hist.length-1];if(last&&last.t===x.timestamp_ms)return;hist.push({t:x.timestamp_ms,pm1:x.pm1_0,pm25:x.pm2_5,pm10:x.pm10_0});if(hist.length>1800)hist.shift();draw()}
+    async function poll(){try{let m=await fetch('/api/metrics',{cache:'no-store'}).then(r=>r.json());up(m);pushLatest(m.latest)}catch(e){$('state').textContent='offline';$('dot').className='dot bad'}}
+    async function loadHist(){try{hist=(await fetch('/api/history',{cache:'no-store'}).then(r=>r.json())).samples||[];draw()}catch(e){}}
+    function draw(){const c=$('chart'),r=c.getBoundingClientRect(),d=window.devicePixelRatio||1;c.width=Math.max(1,r.width*d);c.height=Math.max(1,r.height*d);const g=c.getContext('2d');g.scale(d,d);g.clearRect(0,0,r.width,r.height);g.strokeStyle='#2a313d';g.lineWidth=1;for(let i=0;i<5;i++){let y=24+i*(r.height-48)/4;g.beginPath();g.moveTo(42,y);g.lineTo(r.width-12,y);g.stroke()}let max=Math.max(10,...hist.flatMap(p=>[p.pm1,p.pm25,p.pm10]).filter(Number.isFinite));const lines=[['pm25','#5eb1ff'],['pm10','#ffce56'],['pm1','#39d98a']];
+    g.font='12px system-ui';g.fillStyle='#9aa6b2';g.fillText('PM trend ug/m3',42,16);lines.forEach(([k,col],li)=>{g.strokeStyle=col;g.lineWidth=2;g.beginPath();hist.forEach((p,i)=>{let x=42+i*Math.max(1,(r.width-58))/Math.max(1,hist.length-1),y=r.height-24-(p[k]/max)*(r.height-58);i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();g.fillStyle=col;g.fillText(k,42+li*58,r.height-8)})}
+    setInterval(poll,2000);setInterval(loadHist,10000);addEventListener('resize',draw);poll();loadHist();
+  </script>
+</body>
+</html>

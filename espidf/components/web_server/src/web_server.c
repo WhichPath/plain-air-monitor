@@ -1,0 +1,263 @@
+#include "web_server.h"
+
+#include "data_store.h"
+#include "esp_heap_caps.h"
+#include "esp_http_server.h"
+#include "esp_log.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "sensor_service.h"
+#include "tailnet_service.h"
+#include "wifi_station.h"
+#include <stdlib.h>
+#include <string.h>
+
+static const char *TAG = "web_server";
+static httpd_handle_t server;
+static char device_name[48] = "microlink-sensor";
+
+extern const uint8_t dashboard_html_start[] asm("_binary_dashboard_html_start");
+extern const uint8_t dashboard_html_end[] asm("_binary_dashboard_html_end");
+
+static esp_err_t handler_root(httpd_req_t *req) {
+    size_t len = dashboard_html_end - dashboard_html_start;
+    if (len > 0 && dashboard_html_start[len - 1] == '\0') {
+        len--;
+    }
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, (const char *)dashboard_html_start, len);
+}
+
+static esp_err_t handler_metrics(httpd_req_t *req) {
+    tailnet_status_t tailnet_status;
+    tailnet_service_get_status(&tailnet_status);
+
+    int wifi_rssi = 0;
+    bool has_rssi = station_get_rssi(&wifi_rssi);
+    char rssi_json[16];
+    if (has_rssi) {
+        snprintf(rssi_json, sizeof(rssi_json), "%d", wifi_rssi);
+    } else {
+        snprintf(rssi_json, sizeof(rssi_json), "null");
+    }
+
+    sensor_sample_t sample = {0};
+    bool has_sample = sensor_service_get_latest(&sample);
+
+    sensor_status_t sensor_status;
+    sensor_service_get_status(&sensor_status);
+
+    uint16_t hourly_stored = 0;
+    uint32_t hourly_active_samples = 0;
+    float hourly_active_pm25 = 0.0f;
+    data_store_get_summary(&hourly_stored, &hourly_active_samples, &hourly_active_pm25);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    char *buf = malloc(2048);
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_ERR_NO_MEM;
+    }
+
+    int n = snprintf(buf, 2048,
+        "{\"device\":\"%s\",\"vpn_ip\":\"%s\",\"ml_state\":\"%s\","
+        "\"peer_count\":%d,\"uptime_ms\":%lld,\"heap_free\":%lu,"
+        "\"psram_free\":%lu,\"wifi_rssi\":%s,"
+        "\"sensor\":{\"state\":\"%s\",\"last_error\":%d,\"error_count\":%lu,"
+        "\"read_count\":%lu,\"app_read_failures\":%lu},"
+        "\"hourly\":{\"stored\":%u,\"active_samples\":%lu,\"active_pm25\":%.2f},"
+        "\"latest\":",
+        device_name,
+        tailnet_status.vpn_ip,
+        tailnet_status.state,
+        tailnet_status.peer_count,
+        (long long)(esp_timer_get_time() / 1000),
+        (unsigned long)esp_get_free_heap_size(),
+        (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+        rssi_json,
+        sensor_state_name(sensor_status.state),
+        sensor_status.last_error,
+        (unsigned long)sensor_status.error_count,
+        (unsigned long)sensor_status.read_count,
+        (unsigned long)sensor_status.app_read_failures,
+        hourly_stored,
+        (unsigned long)hourly_active_samples,
+        hourly_active_pm25);
+
+    if (n < 0 || n >= 2048) {
+        free(buf);
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    httpd_resp_send_chunk(req, buf, n);
+
+    if (has_sample) {
+        n = snprintf(buf, 2048,
+            "{\"pm1_0\":%.2f,\"pm2_5\":%.2f,\"pm4_0\":%.2f,\"pm10_0\":%.2f,"
+            "\"nc0_5\":%.2f,\"nc1_0\":%.2f,\"nc2_5\":%.2f,\"nc4_0\":%.2f,"
+            "\"nc10_0\":%.2f,\"typical_particle_size\":%.3f,\"timestamp_ms\":%lld}}",
+            sample.pm1_0, sample.pm2_5, sample.pm4_0, sample.pm10_0,
+            sample.nc0_5, sample.nc1_0, sample.nc2_5, sample.nc4_0,
+            sample.nc10_0, sample.typical_particle_size,
+            (long long)sample.timestamp_ms);
+    } else {
+        n = snprintf(buf, 2048, "null}");
+    }
+
+    if (n < 0 || n >= 2048) {
+        free(buf);
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    httpd_resp_send_chunk(req, buf, n);
+    esp_err_t err = httpd_resp_send_chunk(req, NULL, 0);
+    free(buf);
+    return err;
+}
+
+static esp_err_t handler_history(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr_chunk(req, "{\"interval_ms\":2000,\"samples\":[");
+
+    uint16_t count = sensor_service_get_history_count();
+    for (uint16_t i = 0; i < count; i++) {
+        sensor_history_point_t point;
+        if (!sensor_service_get_history_point(i, &point)) {
+            continue;
+        }
+
+        char item[180];
+        int n = snprintf(item, sizeof(item),
+                         "%s{\"t\":%lld,\"pm1\":%.2f,\"pm25\":%.2f,\"pm10\":%.2f}",
+                         i ? "," : "",
+                         (long long)point.timestamp_ms,
+                         point.pm1_0,
+                         point.pm2_5,
+                         point.pm10_0);
+        if (n > 0) {
+            httpd_resp_send_chunk(req, item, n);
+        }
+    }
+
+    httpd_resp_sendstr_chunk(req, "]}");
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+static esp_err_t handler_hourly(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    if (!data_store_lock(pdMS_TO_TICKS(500))) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "hourly store busy");
+        return ESP_FAIL;
+    }
+
+    hourly_active_t active;
+    data_store_get_active_locked(&active);
+    uint16_t count = data_store_hourly_count_locked();
+
+    char head[256];
+    int n = snprintf(head, sizeof(head),
+                     "{\"window_ms\":%lld,\"stored\":%u,\"capacity\":%u,"
+                     "\"active\":{\"start_ms\":%lld,\"sample_count\":%lu,"
+                     "\"pm1_0\":%.2f,\"pm2_5\":%.2f,\"pm4_0\":%.2f,\"pm10_0\":%.2f},"
+                     "\"records\":[",
+                     (long long)HOURLY_WINDOW_MS,
+                     count,
+                     HOURLY_RECORD_CAPACITY,
+                     (long long)active.start_ms,
+                     (unsigned long)active.sample_count,
+                     active.pm1_0,
+                     active.pm2_5,
+                     active.pm4_0,
+                     active.pm10_0);
+    httpd_resp_send_chunk(req, head, n);
+
+    for (uint16_t i = 0; i < count; i++) {
+        hourly_record_t record;
+        if (!data_store_get_hourly_record_locked(i, &record)) {
+            continue;
+        }
+
+        char item[240];
+        n = snprintf(item, sizeof(item),
+                     "%s{\"seq\":%lu,\"start_ms\":%lld,\"end_ms\":%lld,"
+                     "\"sample_count\":%lu,\"pm1_0\":%.2f,\"pm2_5\":%.2f,"
+                     "\"pm4_0\":%.2f,\"pm10_0\":%.2f}",
+                     i ? "," : "",
+                     (unsigned long)record.seq,
+                     (long long)record.start_ms,
+                     (long long)record.end_ms,
+                     (unsigned long)record.sample_count,
+                     record.pm1_0,
+                     record.pm2_5,
+                     record.pm4_0,
+                     record.pm10_0);
+        if (n > 0) {
+            httpd_resp_send_chunk(req, item, n);
+        }
+    }
+
+    data_store_unlock();
+    httpd_resp_sendstr_chunk(req, "]}");
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+esp_err_t web_server_start(const web_server_config_t *config) {
+    if (server) {
+        return ESP_OK;
+    }
+
+    if (config && config->device_name && config->device_name[0]) {
+        strlcpy(device_name, config->device_name, sizeof(device_name));
+    }
+
+    httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
+    httpd_config.server_port = 80;
+    httpd_config.ctrl_port = 32768;
+    httpd_config.max_uri_handlers = 5;
+    httpd_config.lru_purge_enable = true;
+
+    esp_err_t err = httpd_start(&server, &httpd_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HTTP server start failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    const httpd_uri_t root = {
+        .uri = "/",
+        .method = HTTP_GET,
+        .handler = handler_root,
+        .user_ctx = NULL,
+    };
+    const httpd_uri_t metrics = {
+        .uri = "/api/metrics",
+        .method = HTTP_GET,
+        .handler = handler_metrics,
+        .user_ctx = NULL,
+    };
+    const httpd_uri_t hist = {
+        .uri = "/api/history",
+        .method = HTTP_GET,
+        .handler = handler_history,
+        .user_ctx = NULL,
+    };
+    const httpd_uri_t hourly = {
+        .uri = "/api/hourly",
+        .method = HTTP_GET,
+        .handler = handler_hourly,
+        .user_ctx = NULL,
+    };
+
+    httpd_register_uri_handler(server, &root);
+    httpd_register_uri_handler(server, &metrics);
+    httpd_register_uri_handler(server, &hist);
+    httpd_register_uri_handler(server, &hourly);
+
+    ESP_LOGI(TAG, "HTTP dashboard listening on port 80");
+    return ESP_OK;
+}

@@ -33,5 +33,13 @@ configure_file(
 idf_component_register(
     SRCS "main.c"
     INCLUDE_DIRS "." "${PM_GENERATED_DIR}"
-    REQUIRES microlink sps30 nvs_flash esp_wifi esp_netif esp_event esp_http_server driver
+    REQUIRES
+        data_store
+        driver
+        microlink
+        nvs_flash
+        sensor_service
+        tailnet_service
+        web_server
+        wifi_station
 )
