@@ -18,6 +18,9 @@ New application components intentionally do not use a project-wide prefix.
 - `sensor_service` still uses the SPS30 driver internally. The public API is generic enough
   to add a second driver or replace SPS30 without changing the web or storage layers.
 - `data_store` keeps the existing NVS hourly ring behavior for compatibility.
+  Flash-backed hourly records store PM1.0, PM2.5, PM4, and PM10 only.
+- The dashboard's trend chart is based on flash-backed hourly PM records, not
+  the live in-memory sample stream.
 - `tailnet_service` is the only application component allowed to include MicroLink internals.
 - `web_server/dashboard.html` is embedded as a normal asset instead of escaped C text.
 
