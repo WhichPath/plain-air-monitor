@@ -127,6 +127,14 @@ esp_err_t station_wait_connected(TickType_t timeout_ticks) {
     return (bits & WIFI_CONNECTED_BIT) ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
+bool station_is_connected(void) {
+    if (!wifi_event_group) {
+        return false;
+    }
+
+    return (xEventGroupGetBits(wifi_event_group) & WIFI_CONNECTED_BIT) != 0;
+}
+
 void station_get_ip(char out[16]) {
     if (!out) {
         return;

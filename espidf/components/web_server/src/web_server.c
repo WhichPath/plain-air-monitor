@@ -48,10 +48,10 @@ static esp_err_t handler_metrics(httpd_req_t *req) {
     sensor_status_t sensor_status;
     sensor_service_get_status(&sensor_status);
 
-    uint16_t hourly_stored = 0;
-    uint32_t hourly_active_samples = 0;
-    float hourly_active_pm25 = 0.0f;
-    data_store_get_summary(&hourly_stored, &hourly_active_samples, &hourly_active_pm25);
+    uint32_t stored_records = 0;
+    uint32_t active_samples = 0;
+    float active_pm25 = 0.0f;
+    data_store_get_summary(&stored_records, &active_samples, &active_pm25);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -68,7 +68,7 @@ static esp_err_t handler_metrics(httpd_req_t *req) {
         "\"psram_free\":%lu,\"wifi_rssi\":%s,"
         "\"sensor\":{\"state\":\"%s\",\"last_error\":%d,\"error_count\":%lu,"
         "\"read_count\":%lu,\"app_read_failures\":%lu},"
-        "\"hourly\":{\"stored\":%u,\"active_samples\":%lu,\"active_pm25\":%.2f},"
+        "\"data\":{\"stored\":%lu,\"active_samples\":%lu,\"active_pm25\":%.2f},"
         "\"latest\":",
         device_name,
         tailnet_status.vpn_ip,
@@ -83,9 +83,9 @@ static esp_err_t handler_metrics(httpd_req_t *req) {
         (unsigned long)sensor_status.error_count,
         (unsigned long)sensor_status.read_count,
         (unsigned long)sensor_status.app_read_failures,
-        hourly_stored,
-        (unsigned long)hourly_active_samples,
-        hourly_active_pm25);
+        (unsigned long)stored_records,
+        (unsigned long)active_samples,
+        active_pm25);
 
     if (n < 0 || n >= 2048) {
         free(buf);
@@ -147,58 +147,78 @@ static esp_err_t handler_history(httpd_req_t *req) {
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
-static esp_err_t handler_hourly(httpd_req_t *req) {
+#define DATA_API_MAX_RECORDS 1008u
+
+static esp_err_t handler_data(httpd_req_t *req) {
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
     if (!data_store_lock(pdMS_TO_TICKS(500))) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "hourly store busy");
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "data store busy");
         return ESP_FAIL;
     }
 
-    hourly_active_t active;
+    data_active_t active;
     data_store_get_active_locked(&active);
-    uint16_t count = data_store_hourly_count_locked();
+    uint32_t stored = data_store_record_count_locked();
+    uint32_t capacity = data_store_record_capacity_locked();
+    uint32_t start = (stored > DATA_API_MAX_RECORDS) ? stored - DATA_API_MAX_RECORDS : 0;
+    uint32_t returned = stored - start;
 
-    char head[256];
+    char head[384];
     int n = snprintf(head, sizeof(head),
-                     "{\"window_ms\":%lld,\"stored\":%u,\"capacity\":%u,"
-                     "\"active\":{\"start_ms\":%lld,\"sample_count\":%lu,"
-                     "\"pm1_0\":%.2f,\"pm2_5\":%.2f,\"pm4_0\":%.2f,\"pm10_0\":%.2f},"
+                     "{\"window_ms\":%lld,\"stored\":%lu,\"capacity\":%lu,"
+                     "\"returned\":%lu,"
+                     "\"active\":{\"start_ms\":%lld,\"elapsed_ms\":%lu,"
+                     "\"sample_count\":%u,\"field_mask\":%u,"
+                     "\"pm2_5_avg\":%.2f,\"pm2_5_min\":%.2f,\"pm2_5_max\":%.2f,"
+                     "\"pm10_0_avg\":%.2f,\"pm10_0_min\":%.2f,\"pm10_0_max\":%.2f},"
                      "\"records\":[",
-                     (long long)HOURLY_WINDOW_MS,
-                     count,
-                     HOURLY_RECORD_CAPACITY,
+                     (long long)DATA_RECORD_WINDOW_MS,
+                     (unsigned long)stored,
+                     (unsigned long)capacity,
+                     (unsigned long)returned,
                      (long long)active.start_ms,
-                     (unsigned long)active.sample_count,
-                     active.pm1_0,
-                     active.pm2_5,
-                     active.pm4_0,
-                     active.pm10_0);
+                     (unsigned long)active.elapsed_ms,
+                     active.sample_count,
+                     active.field_mask,
+                     active.pm2_5_avg,
+                     active.pm2_5_min,
+                     active.pm2_5_max,
+                     active.pm10_0_avg,
+                     active.pm10_0_min,
+                     active.pm10_0_max);
     httpd_resp_send_chunk(req, head, n);
 
-    for (uint16_t i = 0; i < count; i++) {
-        hourly_record_t record;
-        if (!data_store_get_hourly_record_locked(i, &record)) {
+    uint32_t emitted = 0;
+    for (uint32_t i = 0; i < returned; i++) {
+        data_record_t record;
+        if (!data_store_get_record_locked(start + i, &record)) {
             continue;
         }
 
-        char item[240];
+        char item[360];
         n = snprintf(item, sizeof(item),
                      "%s{\"seq\":%lu,\"start_ms\":%lld,\"end_ms\":%lld,"
-                     "\"sample_count\":%lu,\"pm1_0\":%.2f,\"pm2_5\":%.2f,"
-                     "\"pm4_0\":%.2f,\"pm10_0\":%.2f}",
-                     i ? "," : "",
+                     "\"duration_ms\":%lu,\"sample_count\":%u,\"field_mask\":%u,"
+                     "\"pm2_5_avg\":%.2f,\"pm2_5_min\":%.2f,\"pm2_5_max\":%.2f,"
+                     "\"pm10_0_avg\":%.2f,\"pm10_0_min\":%.2f,\"pm10_0_max\":%.2f}",
+                     emitted ? "," : "",
                      (unsigned long)record.seq,
                      (long long)record.start_ms,
                      (long long)record.end_ms,
-                     (unsigned long)record.sample_count,
-                     record.pm1_0,
-                     record.pm2_5,
-                     record.pm4_0,
-                     record.pm10_0);
+                     (unsigned long)record.duration_ms,
+                     record.sample_count,
+                     record.field_mask,
+                     record.pm2_5_avg,
+                     record.pm2_5_min,
+                     record.pm2_5_max,
+                     record.pm10_0_avg,
+                     record.pm10_0_min,
+                     record.pm10_0_max);
         if (n > 0) {
             httpd_resp_send_chunk(req, item, n);
+            emitted++;
         }
     }
 
@@ -246,17 +266,17 @@ esp_err_t web_server_start(const web_server_config_t *config) {
         .handler = handler_history,
         .user_ctx = NULL,
     };
-    const httpd_uri_t hourly = {
-        .uri = "/api/hourly",
+    const httpd_uri_t data = {
+        .uri = "/api/data",
         .method = HTTP_GET,
-        .handler = handler_hourly,
+        .handler = handler_data,
         .user_ctx = NULL,
     };
 
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &metrics);
     httpd_register_uri_handler(server, &hist);
-    httpd_register_uri_handler(server, &hourly);
+    httpd_register_uri_handler(server, &data);
 
     ESP_LOGI(TAG, "HTTP dashboard listening on port 80");
     return ESP_OK;

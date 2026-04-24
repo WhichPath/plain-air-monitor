@@ -44,8 +44,8 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 # Watchdog (extended for TLS handshakes)
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
 
-# Partition table. T-Display-S3 has 16MB flash; keep a larger NVS area for
-# MicroLink keys/peer cache plus hourly PM aggregates.
+# Partition table. T-Display-S3 has 16MB flash; keep NVS for config/keys and
+# use a large data partition for append-only sensor aggregates.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"

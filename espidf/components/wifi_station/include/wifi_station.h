@@ -24,6 +24,7 @@ typedef struct {
 
 esp_err_t station_start(const wifi_station_config_t *config);
 esp_err_t station_wait_connected(TickType_t timeout_ticks);
+bool station_is_connected(void);
 void station_get_ip(char out[16]);
 bool station_get_rssi(int *out_rssi);
 

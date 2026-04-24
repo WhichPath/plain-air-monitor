@@ -52,23 +52,23 @@ Runtime services:
 - Dashboard port: `80/tcp`
 - Metrics API: `/api/metrics`
 - Recent in-memory history API: `/api/history`
-- Hourly average API: `/api/hourly`
+- Aggregate data API: `/api/data`
 - Diagnostic UDP echo: `<ESP32_TAILSCALE_IP>:9000/udp`
 
 Storage behavior:
 - Latest sample and fine-grained recent history stay in RAM/PSRAM only.
 - Browser-side charts also keep session-only data in the requesting device's memory.
-- Completed hourly PM averages are persisted to ESP32 NVS flash.
-- NVS uses ESP-IDF's wear-levelled flash storage; firmware writes hourly records only when an hour closes, not every sample.
-- Current hourly capacity is 168 records.
+- Completed 10-minute PM aggregates are persisted to the ESP32 `data` flash partition.
+- The `data` partition is an append-only ring. NVS remains for Wi-Fi, MicroLink keys, peer cache, and small configuration.
+- Aggregate records currently store PM2.5 and PM10 avg/min/max plus sample count. Temperature/humidity fields are reserved for the planned sensor.
 
-The firmware uses a custom partition table with a larger NVS partition. When moving from the earlier build to this layout, erase flash once:
+The firmware uses a custom 16MB partition table with a 256KB NVS partition and a large `data` partition. When moving from the earlier build to this layout, erase flash once:
 
 ```bash
 idf.py -C espidf -p /dev/ttyACM0 erase-flash flash monitor
 ```
 
-`erase-flash` clears NVS, including the MicroLink/Tailscale machine identity and stored hourly records. If the Tailscale auth key is one-time use, generate a fresh reusable or ephemeral auth key before rebuilding after an erase.
+`erase-flash` clears NVS and the `data` partition, including the MicroLink/Tailscale machine identity and stored aggregate records. If the Tailscale auth key is one-time use, generate a fresh reusable or ephemeral auth key before rebuilding after an erase.
 
 SPS30 wiring defaults:
 - Sensor UART RX on ESP32-S3: `GPIO16`

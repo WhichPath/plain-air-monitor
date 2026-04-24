@@ -1,24 +1,37 @@
 #include "tailnet_service.h"
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "microlink.h"
 #include "microlink_internal.h"
+#include "wifi_station.h"
 #include <string.h>
 
 static const char *TAG = "tailnet_service";
 
 #define DIAGNOSTIC_PORT 9000
 #define DIAGNOSTIC_SEND_INTERVAL_MS 5000
+#define TAILNET_HEALTH_INTERVAL_MS 10000
+#define TAILNET_REBIND_COOLDOWN_MS 120000
+#define TAILNET_NOT_CONNECTED_REBIND_MS 180000
+#define TAILNET_DERP_STALE_MS 300000
 
 static microlink_t *ml;
 static microlink_udp_socket_t *udp_sock;
+static SemaphoreHandle_t tailnet_mutex;
 static TaskHandle_t peer_warm_task_handle;
 static TaskHandle_t diagnostic_task_handle;
+static TaskHandle_t health_task_handle;
 static uint32_t diagnostic_target_ip;
 static uint32_t msg_tx_count;
 static uint32_t msg_rx_count;
+static uint64_t last_rebind_ms;
+static uint64_t not_connected_since_ms;
+static uint64_t derp_down_since_ms;
+static char last_wifi_ip[16];
 
 static const char *state_name(microlink_state_t state) {
     switch (state) {
@@ -63,17 +76,62 @@ static void on_udp_rx(microlink_udp_socket_t *sock, uint32_t src_ip, uint16_t sr
 }
 
 static void ensure_udp_socket(void) {
+    if (!tailnet_mutex ||
+        xSemaphoreTake(tailnet_mutex, pdMS_TO_TICKS(250)) != pdTRUE) {
+        return;
+    }
+
     if (!ml || udp_sock || !microlink_is_connected(ml)) {
+        xSemaphoreGive(tailnet_mutex);
         return;
     }
 
     udp_sock = microlink_udp_create(ml, DIAGNOSTIC_PORT);
     if (!udp_sock) {
         ESP_LOGE(TAG, "failed to create UDP diagnostic socket");
+        xSemaphoreGive(tailnet_mutex);
         return;
     }
 
     microlink_udp_set_rx_callback(udp_sock, on_udp_rx, NULL);
+    xSemaphoreGive(tailnet_mutex);
+}
+
+static void close_udp_socket_locked(void) {
+    if (udp_sock) {
+        microlink_udp_close(udp_sock);
+        udp_sock = NULL;
+    }
+}
+
+static bool request_rebind(const char *reason, uint64_t now_ms) {
+    if (!ml || !station_is_connected()) {
+        return false;
+    }
+    if (last_rebind_ms != 0 && now_ms - last_rebind_ms < TAILNET_REBIND_COOLDOWN_MS) {
+        return false;
+    }
+
+    if (tailnet_mutex &&
+        xSemaphoreTake(tailnet_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return false;
+    }
+
+    ESP_LOGW(TAG, "tailnet rebind requested: %s", reason);
+    last_rebind_ms = now_ms;
+    close_udp_socket_locked();
+    esp_err_t err = microlink_rebind(ml);
+    if (err == ESP_OK) {
+        not_connected_since_ms = 0;
+        derp_down_since_ms = 0;
+    } else {
+        ESP_LOGW(TAG, "tailnet rebind failed: %s", esp_err_to_name(err));
+    }
+
+    if (tailnet_mutex) {
+        xSemaphoreGive(tailnet_mutex);
+    }
+    return err == ESP_OK;
 }
 
 static void peer_warm_task(void *arg) {
@@ -106,13 +164,71 @@ static void diagnostic_task(void *arg) {
         uint64_t now = (uint64_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         if (udp_sock && diagnostic_target_ip != 0 &&
             now - last_send_ms >= DIAGNOSTIC_SEND_INTERVAL_MS) {
-            last_send_ms = now;
-            msg_tx_count++;
-            char msg[128];
-            int msg_len = snprintf(msg, sizeof(msg), "hello from ESP32 #%lu",
-                                   (unsigned long)msg_tx_count);
-            microlink_udp_send(udp_sock, diagnostic_target_ip, DIAGNOSTIC_PORT,
-                               msg, msg_len);
+            if (tailnet_mutex &&
+                xSemaphoreTake(tailnet_mutex, pdMS_TO_TICKS(250)) == pdTRUE) {
+                if (udp_sock) {
+                    last_send_ms = now;
+                    msg_tx_count++;
+                    char msg[128];
+                    int msg_len = snprintf(msg, sizeof(msg), "hello from ESP32 #%lu",
+                                           (unsigned long)msg_tx_count);
+                    microlink_udp_send(udp_sock, diagnostic_target_ip, DIAGNOSTIC_PORT,
+                                       msg, msg_len);
+                }
+                xSemaphoreGive(tailnet_mutex);
+            }
+        }
+    }
+}
+
+static void health_task(void *arg) {
+    (void)arg;
+
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(TAILNET_HEALTH_INTERVAL_MS));
+        if (!ml || !station_is_connected()) {
+            not_connected_since_ms = 0;
+            derp_down_since_ms = 0;
+            continue;
+        }
+
+        uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+
+        char wifi_ip[16];
+        station_get_ip(wifi_ip);
+        if (wifi_ip[0] != '\0' && strcmp(wifi_ip, "0.0.0.0") != 0) {
+            if (last_wifi_ip[0] != '\0' && strcmp(last_wifi_ip, wifi_ip) != 0) {
+                strlcpy(last_wifi_ip, wifi_ip, sizeof(last_wifi_ip));
+                request_rebind("wifi IP changed", now_ms);
+                continue;
+            }
+            strlcpy(last_wifi_ip, wifi_ip, sizeof(last_wifi_ip));
+        }
+
+        microlink_state_t state = microlink_get_state(ml);
+        if (state != ML_STATE_CONNECTED) {
+            if (not_connected_since_ms == 0) {
+                not_connected_since_ms = now_ms;
+            } else if (now_ms - not_connected_since_ms >= TAILNET_NOT_CONNECTED_REBIND_MS) {
+                request_rebind("tailnet not connected", now_ms);
+            }
+            continue;
+        }
+        not_connected_since_ms = 0;
+
+        if (!ml->derp.connected) {
+            if (derp_down_since_ms == 0) {
+                derp_down_since_ms = now_ms;
+            } else if (now_ms - derp_down_since_ms >= TAILNET_NOT_CONNECTED_REBIND_MS) {
+                request_rebind("DERP disconnected", now_ms);
+            }
+            continue;
+        }
+        derp_down_since_ms = 0;
+
+        if (ml->derp.last_recv_ms != 0 &&
+            now_ms - ml->derp.last_recv_ms >= TAILNET_DERP_STALE_MS) {
+            request_rebind("DERP receive watchdog stale", now_ms);
         }
     }
 }
@@ -153,6 +269,13 @@ esp_err_t tailnet_service_start(const tailnet_config_t *config) {
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (!tailnet_mutex) {
+        tailnet_mutex = xSemaphoreCreateMutex();
+        if (!tailnet_mutex) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
     diagnostic_target_ip = 0;
     if (config->diagnostic_target_ip && config->diagnostic_target_ip[0] != '\0') {
         diagnostic_target_ip = microlink_parse_ip(config->diagnostic_target_ip);
@@ -185,6 +308,10 @@ esp_err_t tailnet_service_start(const tailnet_config_t *config) {
     if (!diagnostic_task_handle) {
         xTaskCreatePinnedToCore(diagnostic_task, "tailnet_diag", 4096, NULL, 4,
                                 &diagnostic_task_handle, 1);
+    }
+    if (!health_task_handle) {
+        xTaskCreatePinnedToCore(health_task, "tailnet_health", 4096, NULL, 4,
+                                &health_task_handle, 1);
     }
     return ESP_OK;
 }

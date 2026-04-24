@@ -1,94 +1,260 @@
 #include "data_store.h"
 
 #include "esp_log.h"
-#include "nvs.h"
+#include "esp_partition.h"
+#include "esp_rom_crc.h"
+#include <stddef.h>
 #include <string.h>
 
 static const char *TAG = "data_store";
 
-#define DATA_NVS_NAMESPACE "pm_hourly"
-#define DATA_NVS_KEY "records"
-#define DATA_MAGIC 0x504D4831u
-#define DATA_VERSION 1u
+#define DATA_PARTITION_LABEL "data"
+#define DATA_RECORD_MAGIC 0x504D4431u
+#define DATA_RECORD_VERSION 1u
+#define DATA_RECORD_SIZE 128u
+#define DATA_FLASH_SECTOR_SIZE 4096u
 
 typedef struct {
     uint32_t magic;
     uint16_t version;
-    uint16_t count;
-    uint16_t head;
-    uint16_t reserved;
-    uint32_t next_seq;
-    hourly_record_t records[HOURLY_RECORD_CAPACITY];
-} hourly_store_t;
+    uint16_t size;
+    uint32_t seq;
+    int64_t start_ms;
+    int64_t end_ms;
+    uint32_t duration_ms;
+    uint16_t sample_count;
+    uint16_t field_mask;
+    float pm2_5_avg;
+    float pm2_5_min;
+    float pm2_5_max;
+    float pm10_0_avg;
+    float pm10_0_min;
+    float pm10_0_max;
+    float temperature_avg;
+    float temperature_min;
+    float temperature_max;
+    float humidity_avg;
+    float humidity_min;
+    float humidity_max;
+    uint32_t crc32;
+    uint8_t reserved[36];
+} flash_data_record_t;
 
 typedef struct {
     int64_t start_ms;
+    int64_t last_sample_ms;
+    int64_t elapsed_ms;
     uint32_t count;
-    double pm1_0;
-    double pm2_5;
-    double pm4_0;
-    double pm10_0;
-} hourly_accumulator_t;
+    double pm2_5_sum;
+    double pm10_0_sum;
+    float pm2_5_min;
+    float pm2_5_max;
+    float pm10_0_min;
+    float pm10_0_max;
+} data_accumulator_t;
+
+_Static_assert(sizeof(flash_data_record_t) == DATA_RECORD_SIZE,
+               "flash_data_record_t must stay one 128-byte flash slot");
+_Static_assert((DATA_FLASH_SECTOR_SIZE % DATA_RECORD_SIZE) == 0,
+               "record size must divide flash sector size");
 
 static SemaphoreHandle_t store_mutex;
-static hourly_store_t hourly_store;
-static hourly_accumulator_t hourly_acc;
-static nvs_handle_t hourly_nvs;
-static bool hourly_nvs_ready;
+static const esp_partition_t *data_partition;
+static data_accumulator_t active;
+static uint32_t record_capacity;
+static uint32_t record_count;
+static uint32_t write_slot;
+static uint32_t next_seq = 1;
 
-static void store_reset(void) {
-    memset(&hourly_store, 0, sizeof(hourly_store));
-    hourly_store.magic = DATA_MAGIC;
-    hourly_store.version = DATA_VERSION;
-    hourly_store.next_seq = 1;
+static uint32_t record_crc(const flash_data_record_t *record) {
+    return esp_rom_crc32_le(UINT32_MAX, (const uint8_t *)record,
+                            offsetof(flash_data_record_t, crc32));
 }
 
-static esp_err_t save_locked(void) {
-    if (!hourly_nvs_ready) {
-        return ESP_ERR_INVALID_STATE;
+static void flash_to_public_record(const flash_data_record_t *in, data_record_t *out) {
+    memset(out, 0, sizeof(*out));
+    out->seq = in->seq;
+    out->start_ms = in->start_ms;
+    out->end_ms = in->end_ms;
+    out->duration_ms = in->duration_ms;
+    out->sample_count = in->sample_count;
+    out->field_mask = in->field_mask;
+    out->pm2_5_avg = in->pm2_5_avg;
+    out->pm2_5_min = in->pm2_5_min;
+    out->pm2_5_max = in->pm2_5_max;
+    out->pm10_0_avg = in->pm10_0_avg;
+    out->pm10_0_min = in->pm10_0_min;
+    out->pm10_0_max = in->pm10_0_max;
+    out->temperature_avg = in->temperature_avg;
+    out->temperature_min = in->temperature_min;
+    out->temperature_max = in->temperature_max;
+    out->humidity_avg = in->humidity_avg;
+    out->humidity_min = in->humidity_min;
+    out->humidity_max = in->humidity_max;
+}
+
+static bool record_valid(const flash_data_record_t *record) {
+    return record->magic == DATA_RECORD_MAGIC &&
+           record->version == DATA_RECORD_VERSION &&
+           record->size == DATA_RECORD_SIZE &&
+           record->sample_count > 0 &&
+           record->crc32 == record_crc(record);
+}
+
+static bool slot_read(uint32_t slot, flash_data_record_t *record) {
+    if (!data_partition || slot >= record_capacity) {
+        return false;
     }
 
-    esp_err_t err = nvs_set_blob(hourly_nvs, DATA_NVS_KEY, &hourly_store,
-                                 sizeof(hourly_store));
-    if (err == ESP_OK) {
-        err = nvs_commit(hourly_nvs);
+    esp_err_t err = esp_partition_read(data_partition,
+                                       slot * DATA_RECORD_SIZE,
+                                       record,
+                                       sizeof(*record));
+    return err == ESP_OK;
+}
+
+static bool slot_is_erased(uint32_t slot) {
+    flash_data_record_t record;
+    if (!slot_read(slot, &record)) {
+        return false;
     }
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "hourly NVS save failed: %s", esp_err_to_name(err));
+
+    const uint8_t *bytes = (const uint8_t *)&record;
+    for (size_t i = 0; i < sizeof(record); i++) {
+        if (bytes[i] != 0xFF) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static uint32_t sector_first_slot(uint32_t slot) {
+    uint32_t slot_offset = slot * DATA_RECORD_SIZE;
+    return (slot_offset / DATA_FLASH_SECTOR_SIZE) *
+           (DATA_FLASH_SECTOR_SIZE / DATA_RECORD_SIZE);
+}
+
+static uint32_t count_valid_in_sector(uint32_t first_slot) {
+    uint32_t slots_per_sector = DATA_FLASH_SECTOR_SIZE / DATA_RECORD_SIZE;
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < slots_per_sector; i++) {
+        uint32_t slot = first_slot + i;
+        if (slot >= record_capacity) {
+            break;
+        }
+        flash_data_record_t record;
+        if (slot_read(slot, &record) && record_valid(&record)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static esp_err_t erase_sector_for_slot(uint32_t slot) {
+    uint32_t first_slot = sector_first_slot(slot);
+    uint32_t erased_valid = count_valid_in_sector(first_slot);
+    uint32_t sector_offset = first_slot * DATA_RECORD_SIZE;
+    esp_err_t err = esp_partition_erase_range(data_partition, sector_offset,
+                                              DATA_FLASH_SECTOR_SIZE);
+    if (err == ESP_OK) {
+        record_count = (record_count > erased_valid) ? record_count - erased_valid : 0;
     }
     return err;
 }
 
-static void finalize_locked(int64_t end_ms) {
-    if (hourly_acc.count == 0) {
+static esp_err_t slot_write(uint32_t slot, const flash_data_record_t *record) {
+    if (!slot_is_erased(slot)) {
+        esp_err_t erase_err = erase_sector_for_slot(slot);
+        if (erase_err != ESP_OK) {
+            return erase_err;
+        }
+    }
+
+    return esp_partition_write(data_partition,
+                               slot * DATA_RECORD_SIZE,
+                               record,
+                               sizeof(*record));
+}
+
+static void active_reset(int64_t start_ms) {
+    memset(&active, 0, sizeof(active));
+    active.start_ms = start_ms;
+    active.last_sample_ms = start_ms;
+}
+
+static void append_record_locked(int64_t end_ms) {
+    if (!data_partition || active.count == 0 || record_capacity == 0) {
         return;
     }
 
-    hourly_record_t rec = {
-        .seq = hourly_store.next_seq++,
-        .start_ms = hourly_acc.start_ms,
-        .end_ms = end_ms,
-        .sample_count = hourly_acc.count,
-        .pm1_0 = (float)(hourly_acc.pm1_0 / hourly_acc.count),
-        .pm2_5 = (float)(hourly_acc.pm2_5 / hourly_acc.count),
-        .pm4_0 = (float)(hourly_acc.pm4_0 / hourly_acc.count),
-        .pm10_0 = (float)(hourly_acc.pm10_0 / hourly_acc.count),
+    flash_data_record_t record = {
+        .magic = DATA_RECORD_MAGIC,
+        .version = DATA_RECORD_VERSION,
+        .size = DATA_RECORD_SIZE,
+        .seq = next_seq++,
+        .start_ms = active.start_ms,
+        .end_ms = (active.elapsed_ms > 0) ? active.start_ms + active.elapsed_ms : end_ms,
+        .duration_ms = (uint32_t)active.elapsed_ms,
+        .sample_count = (active.count > UINT16_MAX) ? UINT16_MAX : (uint16_t)active.count,
+        .field_mask = DATA_FIELD_PM25 | DATA_FIELD_PM10,
+        .pm2_5_avg = (float)(active.pm2_5_sum / active.count),
+        .pm2_5_min = active.pm2_5_min,
+        .pm2_5_max = active.pm2_5_max,
+        .pm10_0_avg = (float)(active.pm10_0_sum / active.count),
+        .pm10_0_min = active.pm10_0_min,
+        .pm10_0_max = active.pm10_0_max,
     };
+    record.crc32 = record_crc(&record);
 
-    hourly_store.records[hourly_store.head] = rec;
-    hourly_store.head = (hourly_store.head + 1) % HOURLY_RECORD_CAPACITY;
-    if (hourly_store.count < HOURLY_RECORD_CAPACITY) {
-        hourly_store.count++;
+    esp_err_t err = slot_write(write_slot, &record);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "data record write failed at slot %lu: %s",
+                 (unsigned long)write_slot,
+                 esp_err_to_name(err));
+        return;
     }
 
-    ESP_LOGI(TAG, "hourly saved: seq=%lu samples=%lu PM2.5=%.2f PM10=%.2f",
-             (unsigned long)rec.seq,
-             (unsigned long)rec.sample_count,
-             rec.pm2_5,
-             rec.pm10_0);
+    write_slot = (write_slot + 1) % record_capacity;
+    if (record_count < record_capacity) {
+        record_count++;
+    }
 
-    save_locked();
-    memset(&hourly_acc, 0, sizeof(hourly_acc));
+    ESP_LOGI(TAG, "data saved: seq=%lu samples=%u PM2.5 avg/min/max=%.2f/%.2f/%.2f PM10 avg/min/max=%.2f/%.2f/%.2f",
+             (unsigned long)record.seq,
+             record.sample_count,
+             record.pm2_5_avg,
+             record.pm2_5_min,
+             record.pm2_5_max,
+             record.pm10_0_avg,
+             record.pm10_0_min,
+             record.pm10_0_max);
+
+    active_reset(end_ms);
+}
+
+static void scan_partition_locked(void) {
+    record_count = 0;
+    write_slot = 0;
+    next_seq = 1;
+
+    uint32_t max_seq = 0;
+    uint32_t max_slot = 0;
+    for (uint32_t slot = 0; slot < record_capacity; slot++) {
+        flash_data_record_t record;
+        if (!slot_read(slot, &record) || !record_valid(&record)) {
+            continue;
+        }
+        record_count++;
+        if (record.seq >= max_seq) {
+            max_seq = record.seq;
+            max_slot = slot;
+        }
+    }
+
+    if (record_count > 0) {
+        next_seq = max_seq + 1;
+        write_slot = (max_slot + 1) % record_capacity;
+    }
 }
 
 esp_err_t data_store_init(void) {
@@ -97,28 +263,34 @@ esp_err_t data_store_init(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    store_reset();
-    esp_err_t err = nvs_open(DATA_NVS_NAMESPACE, NVS_READWRITE, &hourly_nvs);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "hourly NVS open failed: %s", esp_err_to_name(err));
-        return err;
-    }
-    hourly_nvs_ready = true;
-
-    size_t len = sizeof(hourly_store);
-    err = nvs_get_blob(hourly_nvs, DATA_NVS_KEY, &hourly_store, &len);
-    if (err != ESP_OK || len != sizeof(hourly_store) ||
-        hourly_store.magic != DATA_MAGIC ||
-        hourly_store.version != DATA_VERSION ||
-        hourly_store.count > HOURLY_RECORD_CAPACITY ||
-        hourly_store.head >= HOURLY_RECORD_CAPACITY) {
-        store_reset();
-        save_locked();
-        ESP_LOGI(TAG, "hourly store initialized (%d records)", HOURLY_RECORD_CAPACITY);
-    } else {
-        ESP_LOGI(TAG, "hourly store loaded: %u records", hourly_store.count);
+    data_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                              ESP_PARTITION_SUBTYPE_ANY,
+                                              DATA_PARTITION_LABEL);
+    if (!data_partition) {
+        ESP_LOGE(TAG, "data partition \"%s\" not found", DATA_PARTITION_LABEL);
+        return ESP_ERR_NOT_FOUND;
     }
 
+    record_capacity = data_partition->size / DATA_RECORD_SIZE;
+    if (record_capacity == 0) {
+        ESP_LOGE(TAG, "data partition too small: %lu bytes",
+                 (unsigned long)data_partition->size);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    if (xSemaphoreTake(store_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    scan_partition_locked();
+    active_reset(0);
+    xSemaphoreGive(store_mutex);
+
+    ESP_LOGI(TAG, "data partition ready: offset=0x%lx size=%lu records=%lu/%lu next_seq=%lu",
+             (unsigned long)data_partition->address,
+             (unsigned long)data_partition->size,
+             (unsigned long)record_count,
+             (unsigned long)record_capacity,
+             (unsigned long)next_seq);
     return ESP_OK;
 }
 
@@ -132,20 +304,39 @@ void data_store_add_sample(const sensor_sample_t *sample, void *user_data) {
         return;
     }
 
-    if (hourly_acc.count > 0 &&
-        sample->timestamp_ms - hourly_acc.start_ms >= HOURLY_WINDOW_MS) {
-        finalize_locked(sample->timestamp_ms);
+    if (active.count == 0) {
+        active_reset(sample->timestamp_ms);
+        active.pm2_5_min = sample->pm2_5;
+        active.pm2_5_max = sample->pm2_5;
+        active.pm10_0_min = sample->pm10_0;
+        active.pm10_0_max = sample->pm10_0;
+    } else {
+        int64_t delta_ms = sample->timestamp_ms - active.last_sample_ms;
+        if (delta_ms < 0 || delta_ms > DATA_RECORD_WINDOW_MS) {
+            delta_ms = SENSOR_SAMPLE_INTERVAL_MS;
+            active.start_ms = (sample->timestamp_ms >= active.elapsed_ms) ?
+                              sample->timestamp_ms - active.elapsed_ms : 0;
+        }
+        if (active.elapsed_ms + delta_ms >= DATA_RECORD_WINDOW_MS) {
+            append_record_locked(sample->timestamp_ms);
+            active_reset(sample->timestamp_ms);
+            active.pm2_5_min = sample->pm2_5;
+            active.pm2_5_max = sample->pm2_5;
+            active.pm10_0_min = sample->pm10_0;
+            active.pm10_0_max = sample->pm10_0;
+        } else {
+            active.elapsed_ms += delta_ms;
+            active.last_sample_ms = sample->timestamp_ms;
+        }
     }
 
-    if (hourly_acc.count == 0) {
-        hourly_acc.start_ms = sample->timestamp_ms;
-    }
-
-    hourly_acc.count++;
-    hourly_acc.pm1_0 += sample->pm1_0;
-    hourly_acc.pm2_5 += sample->pm2_5;
-    hourly_acc.pm4_0 += sample->pm4_0;
-    hourly_acc.pm10_0 += sample->pm10_0;
+    active.count++;
+    active.pm2_5_sum += sample->pm2_5;
+    active.pm10_0_sum += sample->pm10_0;
+    if (sample->pm2_5 < active.pm2_5_min) active.pm2_5_min = sample->pm2_5;
+    if (sample->pm2_5 > active.pm2_5_max) active.pm2_5_max = sample->pm2_5;
+    if (sample->pm10_0 < active.pm10_0_min) active.pm10_0_min = sample->pm10_0;
+    if (sample->pm10_0 > active.pm10_0_max) active.pm10_0_max = sample->pm10_0;
 
     xSemaphoreGive(store_mutex);
 }
@@ -160,38 +351,52 @@ void data_store_unlock(void) {
     }
 }
 
-uint16_t data_store_hourly_count_locked(void) {
-    return hourly_store.count;
+uint32_t data_store_record_count_locked(void) {
+    return record_count;
 }
 
-void data_store_get_active_locked(hourly_active_t *out) {
+uint32_t data_store_record_capacity_locked(void) {
+    return record_capacity;
+}
+
+void data_store_get_active_locked(data_active_t *out) {
     if (!out) {
         return;
     }
 
     memset(out, 0, sizeof(*out));
-    out->start_ms = hourly_acc.start_ms;
-    out->sample_count = hourly_acc.count;
-    if (hourly_acc.count > 0) {
-        out->pm1_0 = (float)(hourly_acc.pm1_0 / hourly_acc.count);
-        out->pm2_5 = (float)(hourly_acc.pm2_5 / hourly_acc.count);
-        out->pm4_0 = (float)(hourly_acc.pm4_0 / hourly_acc.count);
-        out->pm10_0 = (float)(hourly_acc.pm10_0 / hourly_acc.count);
+    out->start_ms = active.start_ms;
+    out->elapsed_ms = (uint32_t)active.elapsed_ms;
+    out->sample_count = (active.count > UINT16_MAX) ? UINT16_MAX : (uint16_t)active.count;
+    out->field_mask = DATA_FIELD_PM25 | DATA_FIELD_PM10;
+    if (active.count > 0) {
+        out->pm2_5_avg = (float)(active.pm2_5_sum / active.count);
+        out->pm2_5_min = active.pm2_5_min;
+        out->pm2_5_max = active.pm2_5_max;
+        out->pm10_0_avg = (float)(active.pm10_0_sum / active.count);
+        out->pm10_0_min = active.pm10_0_min;
+        out->pm10_0_max = active.pm10_0_max;
     }
 }
 
-bool data_store_get_hourly_record_locked(uint16_t order, hourly_record_t *out) {
-    if (!out || order >= hourly_store.count) {
+bool data_store_get_record_locked(uint32_t order, data_record_t *out) {
+    if (!out || order >= record_count || record_capacity == 0) {
         return false;
     }
 
-    uint16_t idx = (hourly_store.head + HOURLY_RECORD_CAPACITY -
-                    hourly_store.count + order) % HOURLY_RECORD_CAPACITY;
-    *out = hourly_store.records[idx];
+    uint32_t oldest_slot = (write_slot + record_capacity - record_count) %
+                           record_capacity;
+    uint32_t slot = (oldest_slot + order) % record_capacity;
+    flash_data_record_t record;
+    if (!slot_read(slot, &record) || !record_valid(&record)) {
+        return false;
+    }
+
+    flash_to_public_record(&record, out);
     return true;
 }
 
-void data_store_get_summary(uint16_t *stored, uint32_t *active_samples, float *active_pm25) {
+void data_store_get_summary(uint32_t *stored, uint32_t *active_samples, float *active_pm25) {
     if (stored) {
         *stored = 0;
     }
@@ -207,13 +412,13 @@ void data_store_get_summary(uint16_t *stored, uint32_t *active_samples, float *a
     }
 
     if (stored) {
-        *stored = hourly_store.count;
+        *stored = record_count;
     }
     if (active_samples) {
-        *active_samples = hourly_acc.count;
+        *active_samples = active.count;
     }
-    if (active_pm25 && hourly_acc.count > 0) {
-        *active_pm25 = (float)(hourly_acc.pm2_5 / hourly_acc.count);
+    if (active_pm25 && active.count > 0) {
+        *active_pm25 = (float)(active.pm2_5_sum / active.count);
     }
 
     data_store_unlock();

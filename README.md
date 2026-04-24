@@ -32,7 +32,7 @@ Runtime ports:
 - Web dashboard: `80/tcp` at `http://<ESP32_TAILSCALE_IP>/`
 - Metrics API: `80/tcp` at `/api/metrics`
 - History API: `80/tcp` at `/api/history`
-- Hourly average API: `80/tcp` at `/api/hourly`
+- Aggregate data API: `80/tcp` at `/api/data`
 - UDP diagnostic echo: `9000/udp`
 
 Recommended order:
@@ -44,4 +44,4 @@ Notes:
 - `espidf/main/main.c` starts Wi-Fi, MicroLink, the SPS30 sampling task, a lightweight HTTP dashboard, and the UDP diagnostic echo.
 - `sdkconfig.defaults` keeps the upstream config HTTP server disabled by default.
 - `microlink` stores config and peer data in NVS. For a real deployment, plan around flash encryption.
-- Recent raw samples are RAM/PSRAM-only. Completed hourly averages are stored in NVS using ESP-IDF wear-levelled flash storage.
+- Recent raw samples are RAM/PSRAM-only. Completed 10-minute aggregates are stored in the dedicated `data` flash partition as an append-only ring.
