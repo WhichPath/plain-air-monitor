@@ -21,6 +21,8 @@ typedef struct {
     uint32_t seq;
     int64_t start_ms;
     int64_t end_ms;
+    int64_t start_epoch_ms;
+    int64_t end_epoch_ms;
     uint32_t duration_ms;
     uint16_t sample_count;
     uint16_t field_mask;
@@ -40,6 +42,7 @@ typedef struct {
 
 typedef struct {
     int64_t start_ms;
+    int64_t start_epoch_ms;
     uint32_t elapsed_ms;
     uint16_t sample_count;
     uint16_t field_mask;

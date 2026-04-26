@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Sensor</title>
+  <title>空气传感器</title>
   <style>
     :root{color-scheme:dark;--bg:#0e1116;--panel:#171c24;--line:#2a313d;--text:#edf1f7;--muted:#9aa6b2;--good:#39d98a;--warn:#ffce56;--bad:#ff6b6b;--blue:#5eb1ff;--green:#39d98a;--yellow:#ffce56;--red:#ff7a7a}
     *{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:13px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0;overflow:hidden}
@@ -12,20 +12,20 @@
     main{height:calc(100dvh - 54px);max-width:1000px;margin:0 auto;padding:10px;display:grid;grid-template-rows:auto minmax(160px,1fr) auto;gap:10px}
     .realtime{display:grid;grid-template-columns:1fr 1fr;gap:10px}.panel{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}.panel h2{margin:0 0 8px;font-size:13px;font-weight:650;color:var(--muted)}
     .metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}.metric{min-width:0}.label{color:var(--muted);font-size:11px}.value{font-size:20px;font-weight:720;margin-top:2px;white-space:nowrap}.unit{font-size:10px;color:var(--muted);margin-left:2px;font-weight:500}
-    .chart{min-height:0}.chart canvas{width:100%;height:100%;display:block}.status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.status .item{min-width:0}.status span{display:block;color:var(--muted);font-size:10px}.status b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;margin-top:2px}
+    .chart{min-height:0;position:relative}.chart canvas{width:100%;height:100%;display:block;touch-action:manipulation}.tip{position:absolute;display:none;min-width:132px;max-width:188px;padding:7px 8px;border:1px solid var(--line);border-radius:7px;background:#111720;color:var(--text);box-shadow:0 8px 24px rgba(0,0,0,.28);font-size:11px;line-height:1.35;pointer-events:none;z-index:2}.tip b{display:block;margin-bottom:3px;font-size:11px}.tip span{display:block;color:var(--muted)}.status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.status .item{min-width:0}.status span{display:block;color:var(--muted);font-size:10px}.status b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;margin-top:2px}
     @media(min-width:760px){body{font-size:14px}header{height:62px;padding:12px 18px}h1{font-size:20px}.sub{font-size:12px}main{height:calc(100dvh - 62px);padding:14px;gap:12px;grid-template-rows:auto minmax(240px,1fr) auto}.panel{padding:14px}.value{font-size:28px}.status b{font-size:13px}}
     @media(max-width:370px){main{padding:8px;gap:8px}.realtime{gap:8px}.panel{padding:8px}.metrics{gap:6px}.value{font-size:18px}.status{gap:6px}}
   </style>
 </head>
 <body>
   <header>
-    <div><h1>Sensor</h1><div class="sub">SPS30 over Tailscale</div></div>
-    <div class="pill"><i id="dot" class="dot"></i><span id="state">starting</span></div>
+    <div><h1>空气传感器</h1><div class="sub">SPS30 颗粒物监测</div></div>
+    <div class="pill"><i id="dot" class="dot"></i><span id="state">启动中</span></div>
   </header>
   <main>
     <section class="realtime" aria-label="实时数据">
       <div class="panel">
-        <h2>PM Mass</h2>
+        <h2>PM 质量</h2>
         <div class="metrics">
           <div class="metric"><div class="label">PM1.0</div><div class="value"><span id="pm1">--</span><span class="unit">ug/m3</span></div></div>
           <div class="metric"><div class="label">PM2.5</div><div class="value"><span id="pm25">--</span><span class="unit">ug/m3</span></div></div>
@@ -34,7 +34,7 @@
         </div>
       </div>
       <div class="panel">
-        <h2>NC Count</h2>
+        <h2>NC 计数</h2>
         <div class="metrics">
           <div class="metric"><div class="label">NC0.5</div><div class="value"><span id="nc05">--</span><span class="unit">#/cm3</span></div></div>
           <div class="metric"><div class="label">NC1.0</div><div class="value"><span id="nc10">--</span><span class="unit">#/cm3</span></div></div>
@@ -43,22 +43,29 @@
         </div>
       </div>
     </section>
-    <section class="panel chart" aria-label="闪存趋势图"><canvas id="chart"></canvas></section>
+    <section class="panel chart" aria-label="闪存趋势图"><canvas id="chart"></canvas><div id="tip" class="tip"></div></section>
     <section class="panel status" aria-label="状态">
-      <div class="item"><span>Tailnet</span><b id="vpn">--</b></div>
-      <div class="item"><span>RSSI</span><b id="rssi">--</b></div>
-      <div class="item"><span>Data</span><b id="data_count">--</b></div>
-      <div class="item"><span>Uptime</span><b id="uptime">--</b></div>
+      <div class="item"><span>内网</span><b id="vpn">--</b></div>
+      <div class="item"><span>信号</span><b id="rssi">--</b></div>
+      <div class="item"><span>数据</span><b id="data_count">--</b></div>
+      <div class="item"><span>运行</span><b id="uptime">--</b></div>
     </section>
   </main>
   <script>
-    const $=id=>document.getElementById(id),fmt=(v,d=1)=>Number.isFinite(v)?v.toFixed(d):'--';let records=[];
+    const $=id=>document.getElementById(id),fmt=(v,d=1)=>Number.isFinite(v)?v.toFixed(d):'--';let records=[],active=null,chartNodes=[],hoverNode=null;
     function setMetric(id,value,d=1){$(id).textContent=fmt(value,d)}
-    function updateRealtime(m){const ok=m.sensor&&m.sensor.state==='measuring'&&m.latest;$('dot').className='dot '+(ok?'ok':(m.sensor&&m.sensor.state==='error'?'bad':''));$('state').textContent=ok?'live':(m.sensor?m.sensor.state:'offline');if(m.latest){let x=m.latest;setMetric('pm1',x.pm1_0);setMetric('pm25',x.pm2_5);setMetric('pm4',x.pm4_0);setMetric('pm10',x.pm10_0);setMetric('nc05',x.nc0_5,0);setMetric('nc10',x.nc1_0,0);setMetric('nc25',x.nc2_5,0);setMetric('nc100',x.nc10_0,0)}$('vpn').textContent=m.vpn_ip||'--';$('rssi').textContent=m.wifi_rssi?m.wifi_rssi+' dBm':'--';$('data_count').textContent=(m.data?m.data.stored:0)+' saved';let s=Math.floor(m.uptime_ms/1000);$('uptime').textContent=Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m'}
-    async function pollRealtime(){try{updateRealtime(await fetch('/api/metrics',{cache:'no-store'}).then(r=>r.json()))}catch(e){$('state').textContent='offline';$('dot').className='dot bad'}}
-    async function loadData(){try{let h=await fetch('/api/data',{cache:'no-store'}).then(r=>r.json());records=h.records||[];draw()}catch(e){records=[];draw()}}
-    function timeLabel(ms){let s=Math.max(0,Math.floor(ms/1000)),h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?h+'h'+String(m).padStart(2,'0'):m+'m'}
-    function draw(){const c=$('chart'),r=c.getBoundingClientRect(),d=window.devicePixelRatio||1;c.width=Math.max(1,r.width*d);c.height=Math.max(1,r.height*d);const g=c.getContext('2d');g.scale(d,d);g.clearRect(0,0,r.width,r.height);const pad={l:44,t:46,r:12,b:28},w=Math.max(1,r.width-pad.l-pad.r),h=Math.max(1,r.height-pad.t-pad.b);g.font='11px system-ui';g.fillStyle='#9aa6b2';g.fillText('Flash 10 min PM avg trend',pad.l,15);const keys=[['pm2_5_avg','#5eb1ff','PM2.5 avg'],['pm10_0_avg','#ff7a7a','PM10 avg']];keys.forEach(([k,col,name],i)=>{let x=pad.l+i*92,y=30;g.strokeStyle=col;g.lineWidth=2;g.beginPath();g.moveTo(x,y-3);g.lineTo(x+14,y-3);g.stroke();g.fillStyle='#c9d2dc';g.fillText(name,x+18,y)});if(!records.length){g.fillStyle='#9aa6b2';g.fillText('No stored 10 min records yet',pad.l,pad.t+18);return}let vals=records.flatMap(p=>keys.map(k=>p[k[0]])).filter(Number.isFinite),max=Math.max(10,...vals),top=Math.ceil(max/10)*10;g.strokeStyle='#2a313d';g.fillStyle='#9aa6b2';g.lineWidth=1;for(let i=0;i<4;i++){let y=pad.t+i*h/3,val=top-(top*i/3);g.beginPath();g.moveTo(pad.l,y);g.lineTo(pad.l+w,y);g.stroke();g.fillText(String(Math.round(val)),6,y+4)}g.beginPath();g.moveTo(pad.l,pad.t);g.lineTo(pad.l,pad.t+h);g.lineTo(pad.l+w,pad.t+h);g.stroke();let step=Math.max(1,Math.ceil(records.length/5));records.forEach((p,i)=>{if(i%step&&i!==records.length-1)return;let x=pad.l+i*w/Math.max(1,records.length-1);g.fillText(timeLabel(p.end_ms||p.start_ms||0),Math.min(x,pad.l+w-32),r.height-8)});keys.forEach(([k,col])=>{g.strokeStyle=col;g.lineWidth=2;g.beginPath();records.forEach((p,i)=>{let x=pad.l+i*w/Math.max(1,records.length-1),y=pad.t+h-(Math.max(0,p[k]||0)/top)*h;i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke()})}
+    function uptime(ms){let s=Math.max(0,Math.floor(ms/1000)),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+'d '+h+'h':h+'h '+m+'m'}
+    function updateRealtime(m){const ok=m.sensor&&m.sensor.state==='measuring'&&m.latest;$('dot').className='dot '+(ok?'ok':(m.sensor&&m.sensor.state==='error'?'bad':''));$('state').textContent=ok?'在线':(m.sensor&&m.sensor.state==='error'?'异常':'离线');if(m.latest){let x=m.latest;setMetric('pm1',x.pm1_0);setMetric('pm25',x.pm2_5);setMetric('pm4',x.pm4_0);setMetric('pm10',x.pm10_0);setMetric('nc05',x.nc0_5,0);setMetric('nc10',x.nc1_0,0);setMetric('nc25',x.nc2_5,0);setMetric('nc100',x.nc10_0,0)}$('vpn').textContent=m.wifi_ip||'--';$('rssi').textContent=m.wifi_rssi?m.wifi_rssi+' dBm':'--';$('data_count').textContent=(m.data?m.data.stored:0)+' 条';$('uptime').textContent=uptime(m.uptime_ms||0)}
+    async function pollRealtime(){try{updateRealtime(await fetch('/api/metrics',{cache:'no-store'}).then(r=>r.json()))}catch(e){$('state').textContent='离线';$('dot').className='dot bad'}}
+    async function loadData(){try{let h=await fetch('/api/data?limit=24',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('data '+r.status);return r.json()});records=h.records||[];active=h.active&&h.active.sample_count&&h.active.start_epoch_ms?Object.assign({end_epoch_ms:h.active.start_epoch_ms+h.active.elapsed_ms},h.active):null;draw()}catch(e){if(!records.length&&!active)draw();setTimeout(loadData,5000)}}
+    function ago(epoch){if(!epoch)return'时间未同步';let h=Math.max(0,(Date.now()-epoch)/3600000);return h<1?Math.round(h*60)+'分钟前':h<24?Math.round(h)+'小时前':Math.round(h/24)+'天前'}
+    function niceStep(range){let raw=range/4,p=Math.pow(10,Math.floor(Math.log10(raw||1))),n=raw/p;return (n<=1?1:n<=2?2:n<=5?5:10)*p}
+    function yBounds(vals){let min=Math.min(...vals),max=Math.max(...vals),range=max-min;if(!Number.isFinite(range)){return{min:0,max:10,step:2.5}}let pad=Math.max(1,range*.25),lo=min-pad,hi=max+pad,step=niceStep(hi-lo);lo=Math.floor(lo/step)*step;hi=Math.ceil(hi/step)*step;if(lo<0&&min>=0)lo=0;if(hi<=lo)hi=lo+step*4;return{min:lo,max:hi,step}}
+    function draw(){const c=$('chart'),tip=$('tip'),r=c.getBoundingClientRect(),d=window.devicePixelRatio||1;c.width=Math.max(1,r.width*d);c.height=Math.max(1,r.height*d);const g=c.getContext('2d');g.scale(d,d);g.clearRect(0,0,r.width,r.height);chartNodes=[];tip.style.display='none';const compact=r.width<520,pad={l:compact?36:42,t:45,r:12,b:34},w=Math.max(1,r.width-pad.l-pad.r),h=Math.max(1,r.height-pad.t-pad.b),bucket=600000,latest=active&&active.start_epoch_ms?active.start_epoch_ms:Math.floor(Date.now()/bucket)*bucket,start=latest-23*bucket;g.font='11px system-ui';g.fillStyle='#9aa6b2';g.fillText('最近4小时 PM 趋势',pad.l,15);const keys=[['pm2_5_avg','#5eb1ff','PM2.5'],['pm10_0_avg','#ff7a7a','PM10']];keys.forEach(([k,col,name],i)=>{let x=pad.l+i*74,y=30;g.strokeStyle=col;g.lineWidth=2;g.beginPath();g.moveTo(x,y-3);g.lineTo(x+14,y-3);g.stroke();g.fillStyle='#c9d2dc';g.fillText(name,x+18,y)});const source=active?records.concat([active]):records,byBucket=new Map(source.filter(p=>p.start_epoch_ms>0).map(p=>[Math.floor(p.start_epoch_ms/bucket)*bucket,p]));const points=Array.from({length:24},(_,i)=>byBucket.get(start+i*bucket)||null);let vals=points.flatMap(p=>p?keys.map(k=>p[k[0]]):[]).filter(Number.isFinite);if(!vals.length){hoverNode=null;g.fillStyle='#9aa6b2';g.textAlign='center';g.fillText('数据收集中',pad.l+w/2,pad.t+h/2);g.textAlign='left';return}let bounds=yBounds(vals);g.strokeStyle='#2a313d';g.fillStyle='#9aa6b2';g.lineWidth=1;g.textAlign='right';for(let v=bounds.min,i=0;v<=bounds.max+Math.abs(bounds.step*.01)&&i<8;v+=bounds.step,i++){let y=pad.t+h-((v-bounds.min)/(bounds.max-bounds.min))*h;g.beginPath();g.moveTo(pad.l,y);g.lineTo(pad.l+w,y);g.stroke();g.fillText(Math.abs(v)>=10?String(Math.round(v)):v.toFixed(1),pad.l-7,y+4)}g.textAlign='left';g.beginPath();g.moveTo(pad.l,pad.t);g.lineTo(pad.l,pad.t+h);g.lineTo(pad.l+w,pad.t+h);g.stroke();let ticks=compact?[['4小时前',0],['2小时前',.5],['现在',1]]:[['4小时前',0],['3小时前',.25],['2小时前',.5],['1小时前',.75],['现在',1]];ticks.forEach(([label,t])=>{let x=pad.l+w*t;g.fillStyle='#9aa6b2';g.textAlign=t===1?'right':t===0?'left':'center';g.fillText(label,x,r.height-10);g.strokeStyle='#2a313d';g.beginPath();g.moveTo(x,pad.t+h);g.lineTo(x,pad.t+h+4);g.stroke()});g.textAlign='left';function px(i){return pad.l+i*w/23}function py(v){return pad.t+h-((v-bounds.min)/(bounds.max-bounds.min))*h}keys.forEach(([k,col,name])=>{let prev=null;points.forEach((p,i)=>{if(!p||!Number.isFinite(p[k]))return;let x=px(i),y=py(p[k]);if(prev){g.save();g.strokeStyle=col;g.lineWidth=2;if(i-prev.i>1)g.setLineDash([5,4]);g.beginPath();g.moveTo(prev.x,prev.y);g.lineTo(x,y);g.stroke();g.restore()}prev={x,y,i}});points.forEach((p,i)=>{if(!p||!Number.isFinite(p[k]))return;let v=p[k],x=px(i),y=py(v),isHot=hoverNode&&hoverNode.point===p&&hoverNode.key===k;g.fillStyle='#171c24';g.strokeStyle=col;g.lineWidth=isHot?2.5:2;g.beginPath();g.arc(x,y,isHot?4.5:3.2,0,Math.PI*2);g.fill();g.stroke();chartNodes.push({x,y,point:p,key:k,name,col,value:v})})});if(hoverNode&&!chartNodes.some(n=>n.point===hoverNode.point&&n.key===hoverNode.key))hoverNode=null;if(hoverNode)showTip(hoverNode)}
+    function nearestNode(ev){const r=$('chart').getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;let best=null,dist=18*18;chartNodes.forEach(n=>{let dx=n.x-x,dy=n.y-y,d=dx*dx+dy*dy;if(d<dist){dist=d;best=n}});return best}
+    function showTip(n){const c=$('chart'),tip=$('tip'),box=c.parentElement.getBoundingClientRect();tip.innerHTML='<b>'+n.name+' '+fmt(n.value,2)+' ug/m3</b><span>'+ago(n.point.end_epoch_ms||0)+'</span><span>样本 '+(n.point.sample_count||0)+' 个</span>';tip.style.display='block';let left=c.offsetLeft+n.x+12,top=c.offsetTop+n.y-10;tip.style.left=Math.min(Math.max(8,left),box.width-tip.offsetWidth-8)+'px';tip.style.top=Math.min(Math.max(8,top),box.height-tip.offsetHeight-8)+'px'}
+    function chartPointer(ev){let n=nearestNode(ev);if(n!==hoverNode){hoverNode=n;draw()}}
+    $('chart').addEventListener('pointermove',chartPointer);$('chart').addEventListener('pointerdown',chartPointer);$('chart').addEventListener('pointerleave',()=>{hoverNode=null;draw()});
     setInterval(pollRealtime,2000);setInterval(loadData,60000);addEventListener('resize',draw);pollRealtime();loadData();
   </script>
 </body>

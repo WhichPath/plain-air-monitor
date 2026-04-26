@@ -40,6 +40,7 @@ idf_component_register(
         nvs_flash
         sensor_service
         tailnet_service
+        time_service
         web_server
         wifi_station
 )

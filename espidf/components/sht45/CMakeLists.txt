@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "src/pm_sht45.c"
+        "src/sensirion_i2c_hal_espidf.c"
+        "vendor/sensirion_common.c"
+        "vendor/sht4x.c"
+    INCLUDE_DIRS
+        "include"
+        "vendor"
+    REQUIRES
+        driver
+        esp_timer
+)

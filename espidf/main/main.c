@@ -15,6 +15,7 @@
 #include "pm_credentials.h"
 #include "sensor_service.h"
 #include "tailnet_service.h"
+#include "time_service.h"
 #include "web_server.h"
 #include "wifi_station.h"
 
@@ -105,6 +106,7 @@ void app_main(void) {
     load_wifi_config(&wifi_config);
     ESP_ERROR_CHECK(station_start(&wifi_config));
     ESP_ERROR_CHECK(station_wait_connected(portMAX_DELAY));
+    time_service_start();
 
     station_get_ip(wifi_ip);
 
@@ -133,12 +135,19 @@ void app_main(void) {
         tailnet_status_t tailnet_status;
         tailnet_service_get_status(&tailnet_status);
 
-        ESP_LOGI(TAG, "status: tailnet=%s peers=%d sensor=%s reads=%lu errors=%lu heap=%lu",
+        sensor_sample_t latest;
+        bool has_latest = sensor_service_get_latest(&latest);
+
+        ESP_LOGI(TAG, "status: tailnet=%s peers=%d sensor=%s reads=%lu errors=%lu sht45=%s sht45_reads=%lu temp=%.2fC humidity=%.2f%% heap=%lu",
                  tailnet_status.state,
                  tailnet_status.peer_count,
                  sensor_state_name(sensor_status.state),
                  (unsigned long)sensor_status.read_count,
                  (unsigned long)sensor_status.error_count,
+                 sensor_state_name(sensor_status.sht45_state),
+                 (unsigned long)sensor_status.sht45_read_count,
+                 has_latest && latest.has_temperature ? latest.temperature_c : 0.0f,
+                 has_latest && latest.has_humidity ? latest.humidity_percent : 0.0f,
                  (unsigned long)esp_get_free_heap_size());
     }
 }

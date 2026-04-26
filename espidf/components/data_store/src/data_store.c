@@ -1,16 +1,19 @@
 #include "data_store.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_rom_crc.h"
+#include "time_service.h"
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "data_store";
 
 #define DATA_PARTITION_LABEL "data"
 #define DATA_RECORD_MAGIC 0x504D4431u
-#define DATA_RECORD_VERSION 1u
+#define DATA_RECORD_VERSION 3u
 #define DATA_RECORD_SIZE 128u
 #define DATA_FLASH_SECTOR_SIZE 4096u
 
@@ -21,6 +24,8 @@ typedef struct {
     uint32_t seq;
     int64_t start_ms;
     int64_t end_ms;
+    int64_t start_epoch_ms;
+    int64_t end_epoch_ms;
     uint32_t duration_ms;
     uint16_t sample_count;
     uint16_t field_mask;
@@ -37,21 +42,35 @@ typedef struct {
     float humidity_min;
     float humidity_max;
     uint32_t crc32;
-    uint8_t reserved[36];
+    uint8_t reserved[20];
 } flash_data_record_t;
 
 typedef struct {
     int64_t start_ms;
+    int64_t start_epoch_ms;
     int64_t last_sample_ms;
     int64_t elapsed_ms;
     uint32_t count;
     double pm2_5_sum;
     double pm10_0_sum;
+    double temperature_sum;
+    double humidity_sum;
     float pm2_5_min;
     float pm2_5_max;
     float pm10_0_min;
     float pm10_0_max;
+    float temperature_min;
+    float temperature_max;
+    float humidity_min;
+    float humidity_max;
+    uint32_t temperature_count;
+    uint32_t humidity_count;
 } data_accumulator_t;
+
+typedef struct {
+    uint32_t seq;
+    uint32_t slot;
+} record_index_t;
 
 _Static_assert(sizeof(flash_data_record_t) == DATA_RECORD_SIZE,
                "flash_data_record_t must stay one 128-byte flash slot");
@@ -61,10 +80,13 @@ _Static_assert((DATA_FLASH_SECTOR_SIZE % DATA_RECORD_SIZE) == 0,
 static SemaphoreHandle_t store_mutex;
 static const esp_partition_t *data_partition;
 static data_accumulator_t active;
+static record_index_t *record_index;
 static uint32_t record_capacity;
 static uint32_t record_count;
 static uint32_t write_slot;
 static uint32_t next_seq = 1;
+
+static void scan_partition_locked(void);
 
 static uint32_t record_crc(const flash_data_record_t *record) {
     return esp_rom_crc32_le(UINT32_MAX, (const uint8_t *)record,
@@ -76,6 +98,8 @@ static void flash_to_public_record(const flash_data_record_t *in, data_record_t 
     out->seq = in->seq;
     out->start_ms = in->start_ms;
     out->end_ms = in->end_ms;
+    out->start_epoch_ms = in->start_epoch_ms;
+    out->end_epoch_ms = in->end_epoch_ms;
     out->duration_ms = in->duration_ms;
     out->sample_count = in->sample_count;
     out->field_mask = in->field_mask;
@@ -101,6 +125,16 @@ static bool record_valid(const flash_data_record_t *record) {
            record->crc32 == record_crc(record);
 }
 
+static bool record_erased(const flash_data_record_t *record) {
+    const uint8_t *bytes = (const uint8_t *)record;
+    for (size_t i = 0; i < sizeof(*record); i++) {
+        if (bytes[i] != 0xFF) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool slot_read(uint32_t slot, flash_data_record_t *record) {
     if (!data_partition || slot >= record_capacity) {
         return false;
@@ -118,14 +152,13 @@ static bool slot_is_erased(uint32_t slot) {
     if (!slot_read(slot, &record)) {
         return false;
     }
+    return record_erased(&record);
+}
 
-    const uint8_t *bytes = (const uint8_t *)&record;
-    for (size_t i = 0; i < sizeof(record); i++) {
-        if (bytes[i] != 0xFF) {
-            return false;
-        }
-    }
-    return true;
+static int record_index_compare(const void *a, const void *b) {
+    const record_index_t *ia = (const record_index_t *)a;
+    const record_index_t *ib = (const record_index_t *)b;
+    return (ia->seq > ib->seq) - (ia->seq < ib->seq);
 }
 
 static uint32_t sector_first_slot(uint32_t slot) {
@@ -134,30 +167,34 @@ static uint32_t sector_first_slot(uint32_t slot) {
            (DATA_FLASH_SECTOR_SIZE / DATA_RECORD_SIZE);
 }
 
-static uint32_t count_valid_in_sector(uint32_t first_slot) {
+static bool slot_in_sector(uint32_t slot, uint32_t first_slot) {
     uint32_t slots_per_sector = DATA_FLASH_SECTOR_SIZE / DATA_RECORD_SIZE;
-    uint32_t count = 0;
-    for (uint32_t i = 0; i < slots_per_sector; i++) {
-        uint32_t slot = first_slot + i;
-        if (slot >= record_capacity) {
-            break;
-        }
-        flash_data_record_t record;
-        if (slot_read(slot, &record) && record_valid(&record)) {
-            count++;
+    return slot >= first_slot && slot < first_slot + slots_per_sector &&
+           slot < record_capacity;
+}
+
+static uint32_t remove_index_for_sector(uint32_t first_slot) {
+    uint32_t removed = 0;
+    uint32_t dst = 0;
+    for (uint32_t src = 0; src < record_count; src++) {
+        if (slot_in_sector(record_index[src].slot, first_slot)) {
+            removed++;
+        } else {
+            record_index[dst++] = record_index[src];
         }
     }
-    return count;
+    record_count = dst;
+    return removed;
 }
 
 static esp_err_t erase_sector_for_slot(uint32_t slot) {
     uint32_t first_slot = sector_first_slot(slot);
-    uint32_t erased_valid = count_valid_in_sector(first_slot);
+    uint32_t erased_valid = remove_index_for_sector(first_slot);
     uint32_t sector_offset = first_slot * DATA_RECORD_SIZE;
     esp_err_t err = esp_partition_erase_range(data_partition, sector_offset,
                                               DATA_FLASH_SECTOR_SIZE);
-    if (err == ESP_OK) {
-        record_count = (record_count > erased_valid) ? record_count - erased_valid : 0;
+    if (err != ESP_OK && erased_valid > 0) {
+        scan_partition_locked();
     }
     return err;
 }
@@ -176,15 +213,38 @@ static esp_err_t slot_write(uint32_t slot, const flash_data_record_t *record) {
                                sizeof(*record));
 }
 
-static void active_reset(int64_t start_ms) {
+static int64_t bucket_start_epoch_ms(int64_t epoch_ms) {
+    return (epoch_ms / DATA_RECORD_WINDOW_MS) * DATA_RECORD_WINDOW_MS;
+}
+
+static int64_t aligned_uptime_ms(int64_t sample_uptime_ms,
+                                 int64_t sample_epoch_ms,
+                                 int64_t target_epoch_ms) {
+    int64_t delta_ms = sample_epoch_ms - target_epoch_ms;
+    if (delta_ms <= 0) {
+        return sample_uptime_ms;
+    }
+    return (sample_uptime_ms > delta_ms) ? sample_uptime_ms - delta_ms : 0;
+}
+
+static void active_reset(int64_t start_ms, int64_t start_epoch_ms) {
     memset(&active, 0, sizeof(active));
     active.start_ms = start_ms;
+    active.start_epoch_ms = start_epoch_ms;
     active.last_sample_ms = start_ms;
 }
 
-static void append_record_locked(int64_t end_ms) {
+static void append_record_locked(void) {
     if (!data_partition || active.count == 0 || record_capacity == 0) {
         return;
+    }
+
+    uint16_t field_mask = DATA_FIELD_PM25 | DATA_FIELD_PM10;
+    if (active.temperature_count > 0) {
+        field_mask |= DATA_FIELD_TEMPERATURE;
+    }
+    if (active.humidity_count > 0) {
+        field_mask |= DATA_FIELD_HUMIDITY;
     }
 
     flash_data_record_t record = {
@@ -193,10 +253,12 @@ static void append_record_locked(int64_t end_ms) {
         .size = DATA_RECORD_SIZE,
         .seq = next_seq++,
         .start_ms = active.start_ms,
-        .end_ms = (active.elapsed_ms > 0) ? active.start_ms + active.elapsed_ms : end_ms,
-        .duration_ms = (uint32_t)active.elapsed_ms,
+        .end_ms = active.start_ms + DATA_RECORD_WINDOW_MS,
+        .start_epoch_ms = active.start_epoch_ms,
+        .end_epoch_ms = active.start_epoch_ms + DATA_RECORD_WINDOW_MS,
+        .duration_ms = (uint32_t)DATA_RECORD_WINDOW_MS,
         .sample_count = (active.count > UINT16_MAX) ? UINT16_MAX : (uint16_t)active.count,
-        .field_mask = DATA_FIELD_PM25 | DATA_FIELD_PM10,
+        .field_mask = field_mask,
         .pm2_5_avg = (float)(active.pm2_5_sum / active.count),
         .pm2_5_min = active.pm2_5_min,
         .pm2_5_max = active.pm2_5_max,
@@ -204,6 +266,16 @@ static void append_record_locked(int64_t end_ms) {
         .pm10_0_min = active.pm10_0_min,
         .pm10_0_max = active.pm10_0_max,
     };
+    if (active.temperature_count > 0) {
+        record.temperature_avg = (float)(active.temperature_sum / active.temperature_count);
+        record.temperature_min = active.temperature_min;
+        record.temperature_max = active.temperature_max;
+    }
+    if (active.humidity_count > 0) {
+        record.humidity_avg = (float)(active.humidity_sum / active.humidity_count);
+        record.humidity_min = active.humidity_min;
+        record.humidity_max = active.humidity_max;
+    }
     record.crc32 = record_crc(&record);
 
     esp_err_t err = slot_write(write_slot, &record);
@@ -215,21 +287,24 @@ static void append_record_locked(int64_t end_ms) {
     }
 
     write_slot = (write_slot + 1) % record_capacity;
-    if (record_count < record_capacity) {
+    if (record_index && record_count < record_capacity) {
+        record_index[record_count].seq = record.seq;
+        record_index[record_count].slot = (write_slot + record_capacity - 1) % record_capacity;
         record_count++;
     }
 
-    ESP_LOGI(TAG, "data saved: seq=%lu samples=%u PM2.5 avg/min/max=%.2f/%.2f/%.2f PM10 avg/min/max=%.2f/%.2f/%.2f",
+    ESP_LOGI(TAG, "data saved: seq=%lu samples=%u fields=0x%x PM2.5 avg/min/max=%.2f/%.2f/%.2f PM10 avg/min/max=%.2f/%.2f/%.2f T/RH avg=%.2f/%.2f",
              (unsigned long)record.seq,
              record.sample_count,
+             record.field_mask,
              record.pm2_5_avg,
              record.pm2_5_min,
              record.pm2_5_max,
              record.pm10_0_avg,
              record.pm10_0_min,
-             record.pm10_0_max);
-
-    active_reset(end_ms);
+             record.pm10_0_max,
+             record.temperature_avg,
+             record.humidity_avg);
 }
 
 static void scan_partition_locked(void) {
@@ -239,12 +314,21 @@ static void scan_partition_locked(void) {
 
     uint32_t max_seq = 0;
     uint32_t max_slot = 0;
+    bool stale_data_seen = false;
     for (uint32_t slot = 0; slot < record_capacity; slot++) {
         flash_data_record_t record;
-        if (!slot_read(slot, &record) || !record_valid(&record)) {
+        if (!slot_read(slot, &record)) {
+            continue;
+        }
+        if (!record_valid(&record)) {
+            if (!record_erased(&record)) {
+                stale_data_seen = true;
+            }
             continue;
         }
         record_count++;
+        record_index[record_count - 1].seq = record.seq;
+        record_index[record_count - 1].slot = slot;
         if (record.seq >= max_seq) {
             max_seq = record.seq;
             max_slot = slot;
@@ -252,8 +336,22 @@ static void scan_partition_locked(void) {
     }
 
     if (record_count > 0) {
+        qsort(record_index, record_count, sizeof(record_index[0]), record_index_compare);
         next_seq = max_seq + 1;
         write_slot = (max_slot + 1) % record_capacity;
+        for (uint32_t i = 0; i < record_capacity; i++) {
+            uint32_t slot = (max_slot + 1 + i) % record_capacity;
+            if (slot_is_erased(slot)) {
+                write_slot = slot;
+                break;
+            }
+        }
+    } else if (stale_data_seen) {
+        ESP_LOGW(TAG, "erasing stale data partition records from older format");
+        esp_err_t err = esp_partition_erase_range(data_partition, 0, data_partition->size);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "stale data erase failed: %s", esp_err_to_name(err));
+        }
     }
 }
 
@@ -278,11 +376,21 @@ esp_err_t data_store_init(void) {
         return ESP_ERR_INVALID_SIZE;
     }
 
+    record_index = heap_caps_malloc(record_capacity * sizeof(record_index[0]),
+                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!record_index) {
+        record_index = malloc(record_capacity * sizeof(record_index[0]));
+    }
+    if (!record_index) {
+        ESP_LOGE(TAG, "failed to allocate data record index");
+        return ESP_ERR_NO_MEM;
+    }
+
     if (xSemaphoreTake(store_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
     scan_partition_locked();
-    active_reset(0);
+    active_reset(0, 0);
     xSemaphoreGive(store_mutex);
 
     ESP_LOGI(TAG, "data partition ready: offset=0x%lx size=%lu records=%lu/%lu next_seq=%lu",
@@ -304,32 +412,50 @@ void data_store_add_sample(const sensor_sample_t *sample, void *user_data) {
         return;
     }
 
+    int64_t sample_epoch_ms = 0;
+    if (!time_service_uptime_to_epoch_ms(sample->timestamp_ms, &sample_epoch_ms)) {
+        if (active.count > 0) {
+            active_reset(0, 0);
+        }
+        xSemaphoreGive(store_mutex);
+        return;
+    }
+
+    int64_t bucket_epoch_ms = bucket_start_epoch_ms(sample_epoch_ms);
+    int64_t bucket_uptime_ms = aligned_uptime_ms(sample->timestamp_ms,
+                                                 sample_epoch_ms,
+                                                 bucket_epoch_ms);
+
     if (active.count == 0) {
-        active_reset(sample->timestamp_ms);
+        active_reset(bucket_uptime_ms, bucket_epoch_ms);
         active.pm2_5_min = sample->pm2_5;
         active.pm2_5_max = sample->pm2_5;
         active.pm10_0_min = sample->pm10_0;
         active.pm10_0_max = sample->pm10_0;
-    } else {
-        int64_t delta_ms = sample->timestamp_ms - active.last_sample_ms;
-        if (delta_ms < 0 || delta_ms > DATA_RECORD_WINDOW_MS) {
-            delta_ms = SENSOR_SAMPLE_INTERVAL_MS;
-            active.start_ms = (sample->timestamp_ms >= active.elapsed_ms) ?
-                              sample->timestamp_ms - active.elapsed_ms : 0;
-        }
-        if (active.elapsed_ms + delta_ms >= DATA_RECORD_WINDOW_MS) {
-            append_record_locked(sample->timestamp_ms);
-            active_reset(sample->timestamp_ms);
-            active.pm2_5_min = sample->pm2_5;
-            active.pm2_5_max = sample->pm2_5;
-            active.pm10_0_min = sample->pm10_0;
-            active.pm10_0_max = sample->pm10_0;
-        } else {
-            active.elapsed_ms += delta_ms;
-            active.last_sample_ms = sample->timestamp_ms;
-        }
+    } else if (bucket_epoch_ms < active.start_epoch_ms) {
+        ESP_LOGW(TAG, "time moved backwards, dropping active partial bucket");
+        active_reset(bucket_uptime_ms, bucket_epoch_ms);
+        active.pm2_5_min = sample->pm2_5;
+        active.pm2_5_max = sample->pm2_5;
+        active.pm10_0_min = sample->pm10_0;
+        active.pm10_0_max = sample->pm10_0;
+    } else if (bucket_epoch_ms != active.start_epoch_ms) {
+        append_record_locked();
+        active_reset(bucket_uptime_ms, bucket_epoch_ms);
+        active.pm2_5_min = sample->pm2_5;
+        active.pm2_5_max = sample->pm2_5;
+        active.pm10_0_min = sample->pm10_0;
+        active.pm10_0_max = sample->pm10_0;
     }
 
+    int64_t elapsed_ms = sample_epoch_ms - active.start_epoch_ms;
+    if (elapsed_ms < 0) {
+        elapsed_ms = 0;
+    } else if (elapsed_ms > DATA_RECORD_WINDOW_MS) {
+        elapsed_ms = DATA_RECORD_WINDOW_MS;
+    }
+    active.elapsed_ms = elapsed_ms;
+    active.last_sample_ms = sample->timestamp_ms;
     active.count++;
     active.pm2_5_sum += sample->pm2_5;
     active.pm10_0_sum += sample->pm10_0;
@@ -337,6 +463,34 @@ void data_store_add_sample(const sensor_sample_t *sample, void *user_data) {
     if (sample->pm2_5 > active.pm2_5_max) active.pm2_5_max = sample->pm2_5;
     if (sample->pm10_0 < active.pm10_0_min) active.pm10_0_min = sample->pm10_0;
     if (sample->pm10_0 > active.pm10_0_max) active.pm10_0_max = sample->pm10_0;
+    if (sample->has_temperature) {
+        if (active.temperature_count == 0) {
+            active.temperature_min = sample->temperature_c;
+            active.temperature_max = sample->temperature_c;
+        }
+        active.temperature_count++;
+        active.temperature_sum += sample->temperature_c;
+        if (sample->temperature_c < active.temperature_min) {
+            active.temperature_min = sample->temperature_c;
+        }
+        if (sample->temperature_c > active.temperature_max) {
+            active.temperature_max = sample->temperature_c;
+        }
+    }
+    if (sample->has_humidity) {
+        if (active.humidity_count == 0) {
+            active.humidity_min = sample->humidity_percent;
+            active.humidity_max = sample->humidity_percent;
+        }
+        active.humidity_count++;
+        active.humidity_sum += sample->humidity_percent;
+        if (sample->humidity_percent < active.humidity_min) {
+            active.humidity_min = sample->humidity_percent;
+        }
+        if (sample->humidity_percent > active.humidity_max) {
+            active.humidity_max = sample->humidity_percent;
+        }
+    }
 
     xSemaphoreGive(store_mutex);
 }
@@ -366,9 +520,16 @@ void data_store_get_active_locked(data_active_t *out) {
 
     memset(out, 0, sizeof(*out));
     out->start_ms = active.start_ms;
+    out->start_epoch_ms = active.start_epoch_ms;
     out->elapsed_ms = (uint32_t)active.elapsed_ms;
     out->sample_count = (active.count > UINT16_MAX) ? UINT16_MAX : (uint16_t)active.count;
     out->field_mask = DATA_FIELD_PM25 | DATA_FIELD_PM10;
+    if (active.temperature_count > 0) {
+        out->field_mask |= DATA_FIELD_TEMPERATURE;
+    }
+    if (active.humidity_count > 0) {
+        out->field_mask |= DATA_FIELD_HUMIDITY;
+    }
     if (active.count > 0) {
         out->pm2_5_avg = (float)(active.pm2_5_sum / active.count);
         out->pm2_5_min = active.pm2_5_min;
@@ -377,6 +538,16 @@ void data_store_get_active_locked(data_active_t *out) {
         out->pm10_0_min = active.pm10_0_min;
         out->pm10_0_max = active.pm10_0_max;
     }
+    if (active.temperature_count > 0) {
+        out->temperature_avg = (float)(active.temperature_sum / active.temperature_count);
+        out->temperature_min = active.temperature_min;
+        out->temperature_max = active.temperature_max;
+    }
+    if (active.humidity_count > 0) {
+        out->humidity_avg = (float)(active.humidity_sum / active.humidity_count);
+        out->humidity_min = active.humidity_min;
+        out->humidity_max = active.humidity_max;
+    }
 }
 
 bool data_store_get_record_locked(uint32_t order, data_record_t *out) {
@@ -384,9 +555,7 @@ bool data_store_get_record_locked(uint32_t order, data_record_t *out) {
         return false;
     }
 
-    uint32_t oldest_slot = (write_slot + record_capacity - record_count) %
-                           record_capacity;
-    uint32_t slot = (oldest_slot + order) % record_capacity;
+    uint32_t slot = record_index[order].slot;
     flash_data_record_t record;
     if (!slot_read(slot, &record) || !record_valid(&record)) {
         return false;

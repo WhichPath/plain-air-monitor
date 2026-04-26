@@ -29,6 +29,10 @@ typedef struct {
     float nc4_0;
     float nc10_0;
     float typical_particle_size;
+    float temperature_c;
+    float humidity_percent;
+    bool has_temperature;
+    bool has_humidity;
     int64_t timestamp_ms;
 } sensor_sample_t;
 
@@ -38,6 +42,12 @@ typedef struct {
     uint32_t error_count;
     uint32_t read_count;
     uint32_t app_read_failures;
+    sensor_state_t sht45_state;
+    int sht45_last_error;
+    uint32_t sht45_error_count;
+    uint32_t sht45_read_count;
+    uint32_t sht45_serial;
+    bool sht45_detected;
 } sensor_status_t;
 
 typedef struct {
@@ -45,6 +55,10 @@ typedef struct {
     float pm1_0;
     float pm2_5;
     float pm10_0;
+    float temperature_c;
+    float humidity_percent;
+    bool has_temperature;
+    bool has_humidity;
 } sensor_history_point_t;
 
 typedef void (*sensor_sample_callback_t)(const sensor_sample_t *sample, void *user_data);

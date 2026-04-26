@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "pm_sht45.h"
 #include "pm_sps30.h"
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,16 @@ static TaskHandle_t task_handle;
 static sensor_sample_callback_t sample_callback;
 static void *sample_callback_data;
 
+static sensor_state_t map_sht45_state(pm_sht45_state_t state) {
+    switch (state) {
+        case PM_SHT45_STATE_INITIALIZING: return SENSOR_STATE_INITIALIZING;
+        case PM_SHT45_STATE_MEASURING: return SENSOR_STATE_MEASURING;
+        case PM_SHT45_STATE_ERROR: return SENSOR_STATE_ERROR;
+        case PM_SHT45_STATE_UNINITIALIZED:
+        default: return SENSOR_STATE_UNINITIALIZED;
+    }
+}
+
 static sensor_state_t map_sps30_state(pm_sps30_state_t state) {
     switch (state) {
         case PM_SPS30_STATE_INITIALIZING: return SENSOR_STATE_INITIALIZING;
@@ -33,6 +44,7 @@ static sensor_state_t map_sps30_state(pm_sps30_state_t state) {
 }
 
 static void sample_from_sps30(sensor_sample_t *out, const pm_sps30_sample_t *in) {
+    memset(out, 0, sizeof(*out));
     out->pm1_0 = in->pm1_0;
     out->pm2_5 = in->pm2_5;
     out->pm4_0 = in->pm4_0;
@@ -44,6 +56,14 @@ static void sample_from_sps30(sensor_sample_t *out, const pm_sps30_sample_t *in)
     out->nc10_0 = in->nc10_0;
     out->typical_particle_size = in->typical_particle_size;
     out->timestamp_ms = in->timestamp_ms;
+}
+
+static void add_sht45_to_sample(sensor_sample_t *out,
+                                const pm_sht45_sample_t *in) {
+    out->temperature_c = in->temperature_c;
+    out->humidity_percent = in->humidity_percent;
+    out->has_temperature = true;
+    out->has_humidity = true;
 }
 
 static void history_add(const sensor_sample_t *sample) {
@@ -66,6 +86,8 @@ static void history_add(const sensor_sample_t *sample) {
 static void sensor_task(void *arg) {
     (void)arg;
     int consecutive_failures = 0;
+    int sht45_retry_countdown = 0;
+    bool sht45_ready = false;
 
     while (1) {
         if (pm_sps30_init() == ESP_OK) {
@@ -77,12 +99,41 @@ static void sensor_task(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 
+    sht45_ready = (pm_sht45_init() == ESP_OK);
+    if (!sht45_ready) {
+        ESP_LOGW(TAG, "SHT45 not available yet; PM sampling will continue");
+    }
+
     while (1) {
         pm_sps30_sample_t raw_sample;
         esp_err_t err = pm_sps30_read(&raw_sample);
         if (err == ESP_OK) {
             sensor_sample_t sample;
             sample_from_sps30(&sample, &raw_sample);
+
+            if (!sht45_ready) {
+                if (sht45_retry_countdown <= 0) {
+                    sht45_ready = (pm_sht45_init() == ESP_OK);
+                    sht45_retry_countdown = 5;
+                } else {
+                    sht45_retry_countdown--;
+                }
+            }
+
+            if (sht45_ready) {
+                pm_sht45_sample_t sht45_sample;
+                esp_err_t sht45_err = pm_sht45_read(&sht45_sample);
+                if (sht45_err == ESP_OK) {
+                    add_sht45_to_sample(&sample, &sht45_sample);
+                    ESP_LOGI(TAG, "SHT45 sample: temperature=%.2f C humidity=%.2f %%RH",
+                             sample.temperature_c,
+                             sample.humidity_percent);
+                } else {
+                    sht45_ready = false;
+                    sht45_retry_countdown = 5;
+                }
+            }
+
             consecutive_failures = 0;
             history_add(&sample);
             if (sample_callback) {
@@ -162,6 +213,15 @@ void sensor_service_get_status(sensor_status_t *out) {
     out->error_count = sps30_status.error_count;
     out->read_count = sps30_status.read_count;
     out->app_read_failures = read_failures;
+
+    pm_sht45_status_t sht45_status;
+    pm_sht45_get_status(&sht45_status);
+    out->sht45_state = map_sht45_state(sht45_status.state);
+    out->sht45_last_error = sht45_status.last_error;
+    out->sht45_error_count = sht45_status.error_count;
+    out->sht45_read_count = sht45_status.read_count;
+    out->sht45_serial = sht45_status.serial;
+    out->sht45_detected = sht45_status.detected;
 }
 
 uint16_t sensor_service_get_history_count(void) {
@@ -192,6 +252,10 @@ bool sensor_service_get_history_point(uint16_t order, sensor_history_point_t *ou
             out->pm1_0 = sample.pm1_0;
             out->pm2_5 = sample.pm2_5;
             out->pm10_0 = sample.pm10_0;
+            out->temperature_c = sample.temperature_c;
+            out->humidity_percent = sample.humidity_percent;
+            out->has_temperature = sample.has_temperature;
+            out->has_humidity = sample.has_humidity;
             ok = true;
         }
         xSemaphoreGive(sensor_mutex);
