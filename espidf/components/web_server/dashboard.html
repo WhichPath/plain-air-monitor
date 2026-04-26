@@ -11,7 +11,7 @@
     h1{font-size:18px;margin:0;font-weight:650}.sub{color:var(--muted);font-size:11px;margin-top:1px}.pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:5px 9px;color:var(--muted);white-space:nowrap}.dot{width:8px;height:8px;border-radius:50%;background:var(--warn)}.dot.ok{background:var(--good)}.dot.bad{background:var(--bad)}
     main{height:calc(100dvh - 54px);max-width:1000px;margin:0 auto;padding:10px;display:grid;grid-template-rows:auto minmax(160px,1fr) auto;gap:10px}
     .realtime{display:grid;grid-template-columns:1fr 1fr;gap:10px}.panel{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}.panel h2{margin:0 0 8px;font-size:13px;font-weight:650;color:var(--muted)}
-    .metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}.env-metrics{height:calc(100% - 25px);align-content:center}.metric{min-width:0}.label{color:var(--muted);font-size:11px}.value{font-size:20px;font-weight:720;margin-top:2px;white-space:nowrap}.unit{font-size:10px;color:var(--muted);margin-left:2px;font-weight:500}
+    .metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pm-metrics,.env-metrics{height:calc(100% - 25px);align-content:center}.metric{min-width:0}.label{color:var(--muted);font-size:11px}.value{font-size:20px;font-weight:720;margin-top:2px;white-space:nowrap}.unit{font-size:10px;color:var(--muted);margin-left:2px;font-weight:500}
     .chart{min-height:0;position:relative}.chart canvas{width:100%;height:100%;display:block;touch-action:manipulation}.tip{position:absolute;display:none;min-width:132px;max-width:188px;padding:7px 8px;border:1px solid var(--line);border-radius:7px;background:#111720;color:var(--text);box-shadow:0 8px 24px rgba(0,0,0,.28);font-size:11px;line-height:1.35;pointer-events:none;z-index:2}.tip b{display:block;margin-bottom:3px;font-size:11px}.tip span{display:block;color:var(--muted)}
     .status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.status .item{min-width:0}.status span{display:block;color:var(--muted);font-size:10px}.status b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;margin-top:2px}
     @media(min-width:760px){body{font-size:14px}header{height:62px;padding:12px 18px}h1{font-size:20px}.sub{font-size:12px}main{height:calc(100dvh - 62px);padding:14px;gap:12px;grid-template-rows:auto minmax(240px,1fr) auto}.panel{padding:14px}.value{font-size:28px}.status b{font-size:13px}}
@@ -27,11 +27,9 @@
     <section class="realtime" aria-label="实时数据">
       <div class="panel">
         <h2>PM 质量</h2>
-        <div class="metrics">
+        <div class="metrics pm-metrics">
           <div class="metric"><div class="label">PM1.0</div><div class="value"><span id="pm1">--</span><span class="unit">ug/m3</span></div></div>
-          <div class="metric"><div class="label">PM2.5</div><div class="value"><span id="pm25">--</span><span class="unit">ug/m3</span></div></div>
           <div class="metric"><div class="label">PM4</div><div class="value"><span id="pm4">--</span><span class="unit">ug/m3</span></div></div>
-          <div class="metric"><div class="label">PM10</div><div class="value"><span id="pm10">--</span><span class="unit">ug/m3</span></div></div>
         </div>
       </div>
       <div class="panel">
@@ -61,7 +59,7 @@
       const ok=sensorOk&&m.latest;
       $('dot').className='dot '+(ok?'ok':(m.sensor&&m.sensor.state==='error'?'bad':''));
       $('state').textContent=ok?(envOk?'在线':'颗粒物在线'):(m.sensor&&m.sensor.state==='error'?'异常':'离线');
-      if(m.latest){let x=m.latest;setMetric('pm1',x.pm1_0);setMetric('pm25',x.pm2_5);setMetric('pm4',x.pm4_0);setMetric('pm10',x.pm10_0);setMetric('temp',x.has_temperature?x.temperature_c:NaN,1);setMetric('hum',x.has_humidity?x.humidity_percent:NaN,1)}
+      if(m.latest){let x=m.latest;setMetric('pm1',x.pm1_0);setMetric('pm4',x.pm4_0);setMetric('temp',x.has_temperature?x.temperature_c:NaN,1);setMetric('hum',x.has_humidity?x.humidity_percent:NaN,1)}
       $('vpn').textContent=m.wifi_ip||'--';
       $('rssi').textContent=Number.isFinite(m.wifi_rssi)?m.wifi_rssi+' dBm':'--';
       $('data_count').textContent=(m.data?m.data.stored:0)+' 条';
@@ -89,14 +87,15 @@
       g.save();
       g.beginPath();g.rect(band.x-40,band.y,band.w+40,band.h);g.clip();
       let vals=points.flatMap(p=>series.map(s=>hasValue(p,s)?p[s.key]:NaN)).filter(Number.isFinite);
+      g.strokeStyle='#2a313d';g.lineWidth=1;g.strokeRect(band.x,band.y,band.w,band.h);
       g.fillStyle='#c9d2dc';g.font='11px system-ui';g.textAlign='left';g.fillText(band.title,band.x,band.y+12);
       series.forEach((s,i)=>{let x=band.x+66+i*76,y=band.y+12;g.strokeStyle=s.color;g.lineWidth=2;g.beginPath();g.moveTo(x,y-4);g.lineTo(x+14,y-4);g.stroke();g.fillStyle='#9aa6b2';g.fillText(s.name,x+18,y)});
       if(!vals.length){g.fillStyle='#9aa6b2';g.textAlign='center';g.fillText('数据收集中',band.x+band.w/2,band.y+band.h/2);g.restore();return}
       let bounds=yBounds(vals),plotTop=band.y+20,plotH=band.h-26;
       function px(i){return band.x+i*band.w/23}
       function py(v){return plotTop+plotH-((v-bounds.min)/(bounds.max-bounds.min))*plotH}
-      g.strokeStyle='#2a313d';g.lineWidth=1;g.fillStyle='#9aa6b2';g.textAlign='right';
-      for(let v=bounds.min,i=0;v<=bounds.max+Math.abs(bounds.step*.01)&&i<6;v+=bounds.step,i++){let y=py(v);g.beginPath();g.moveTo(band.x,y);g.lineTo(band.x+band.w,y);g.stroke();g.fillText(Math.abs(v)>=10?String(Math.round(v)):v.toFixed(1),band.x-7,y+4)}
+      g.fillStyle='#9aa6b2';g.textAlign='right';
+      for(let v=bounds.min,i=0;v<=bounds.max+Math.abs(bounds.step*.01)&&i<6;v+=bounds.step,i++){let y=py(v);g.fillText(Math.abs(v)>=10?String(Math.round(v)):v.toFixed(1),band.x-7,y+4)}
       series.forEach(s=>{
         let prev=null;
         points.forEach((p,i)=>{if(!hasValue(p,s))return;let x=px(i),y=py(p[s.key]);if(prev){g.save();g.strokeStyle=s.color;g.lineWidth=2;if(i-prev.i>1)g.setLineDash([5,4]);g.beginPath();g.moveTo(prev.x,prev.y);g.lineTo(x,y);g.stroke();g.restore()}prev={x,y,i}});
@@ -120,7 +119,6 @@
       drawBand(g,bands[0],points,[{key:'temperature_avg',field:FIELD_TEMP,color:'#ffce56',name:'温度',unit:'C',digits:1}]);
       drawBand(g,bands[1],points,[{key:'humidity_avg',field:FIELD_HUM,color:'#39d98a',name:'湿度',unit:'%RH',digits:1}]);
       drawBand(g,bands[2],points,[{key:'pm2_5_avg',field:FIELD_PM25,color:'#5eb1ff',name:'PM2.5',unit:'ug/m3',digits:2},{key:'pm10_0_avg',field:FIELD_PM10,color:'#ff7a7a',name:'PM10',unit:'ug/m3',digits:2}]);
-      g.strokeStyle='#2a313d';g.beginPath();bands.slice(1).forEach(b=>{g.moveTo(pad.l,b.y-gap/2);g.lineTo(pad.l+w,b.y-gap/2)});g.stroke();
       const axisY=pad.t+h,ticks=compact?[['4小时前',0],['2小时前',.5],['现在',1]]:[['4小时前',0],['3小时前',.25],['2小时前',.5],['1小时前',.75],['现在',1]];
       ticks.forEach(([label,t])=>{let x=pad.l+w*t;g.fillStyle='#9aa6b2';g.textAlign=t===1?'right':t===0?'left':'center';g.fillText(label,x,r.height-10);g.strokeStyle='#2a313d';g.beginPath();g.moveTo(x,axisY);g.lineTo(x,axisY+4);g.stroke()});
       if(hoverNode&&!chartNodes.some(n=>n.point===hoverNode.point&&n.series.key===hoverNode.series.key))hoverNode=null;
