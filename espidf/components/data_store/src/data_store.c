@@ -68,6 +68,13 @@ typedef struct {
 } data_accumulator_t;
 
 typedef struct {
+    double sum;
+    float min;
+    float max;
+    uint32_t count;
+} scalar_accumulator_t;
+
+typedef struct {
     uint32_t seq;
     uint32_t slot;
 } record_index_t;
@@ -234,6 +241,75 @@ static void active_reset(int64_t start_ms, int64_t start_epoch_ms) {
     active.last_sample_ms = start_ms;
 }
 
+static void scalar_add(scalar_accumulator_t *acc, float value) {
+    if (acc->count == 0) {
+        acc->min = value;
+        acc->max = value;
+    } else {
+        if (value < acc->min) {
+            acc->min = value;
+        }
+        if (value > acc->max) {
+            acc->max = value;
+        }
+    }
+    acc->sum += value;
+    acc->count++;
+}
+
+static void active_add_sample_values(const sensor_sample_t *sample) {
+    scalar_accumulator_t pm25 = {
+        .sum = active.pm2_5_sum,
+        .min = active.pm2_5_min,
+        .max = active.pm2_5_max,
+        .count = active.count,
+    };
+    scalar_accumulator_t pm10 = {
+        .sum = active.pm10_0_sum,
+        .min = active.pm10_0_min,
+        .max = active.pm10_0_max,
+        .count = active.count,
+    };
+
+    scalar_add(&pm25, sample->pm2_5);
+    scalar_add(&pm10, sample->pm10_0);
+    active.count = pm25.count;
+    active.pm2_5_sum = pm25.sum;
+    active.pm2_5_min = pm25.min;
+    active.pm2_5_max = pm25.max;
+    active.pm10_0_sum = pm10.sum;
+    active.pm10_0_min = pm10.min;
+    active.pm10_0_max = pm10.max;
+
+    if (sample->has_temperature) {
+        scalar_accumulator_t temperature = {
+            .sum = active.temperature_sum,
+            .min = active.temperature_min,
+            .max = active.temperature_max,
+            .count = active.temperature_count,
+        };
+        scalar_add(&temperature, sample->temperature_c);
+        active.temperature_sum = temperature.sum;
+        active.temperature_min = temperature.min;
+        active.temperature_max = temperature.max;
+        active.temperature_count = temperature.count;
+    }
+
+    if (sample->has_humidity) {
+        scalar_accumulator_t humidity = {
+            .sum = active.humidity_sum,
+            .min = active.humidity_min,
+            .max = active.humidity_max,
+            .count = active.humidity_count,
+        };
+        scalar_add(&humidity, sample->humidity_percent);
+        active.humidity_sum = humidity.sum;
+        active.humidity_min = humidity.min;
+        active.humidity_max = humidity.max;
+        active.humidity_count = humidity.count;
+    }
+}
+
 static void append_record_locked(void) {
     if (!data_partition || active.count == 0 || record_capacity == 0) {
         return;
@@ -314,16 +390,12 @@ static void scan_partition_locked(void) {
 
     uint32_t max_seq = 0;
     uint32_t max_slot = 0;
-    bool stale_data_seen = false;
     for (uint32_t slot = 0; slot < record_capacity; slot++) {
         flash_data_record_t record;
         if (!slot_read(slot, &record)) {
             continue;
         }
         if (!record_valid(&record)) {
-            if (!record_erased(&record)) {
-                stale_data_seen = true;
-            }
             continue;
         }
         record_count++;
@@ -345,12 +417,6 @@ static void scan_partition_locked(void) {
                 write_slot = slot;
                 break;
             }
-        }
-    } else if (stale_data_seen) {
-        ESP_LOGW(TAG, "erasing stale data partition records from older format");
-        esp_err_t err = esp_partition_erase_range(data_partition, 0, data_partition->size);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "stale data erase failed: %s", esp_err_to_name(err));
         }
     }
 }
@@ -456,41 +522,7 @@ void data_store_add_sample(const sensor_sample_t *sample, void *user_data) {
     }
     active.elapsed_ms = elapsed_ms;
     active.last_sample_ms = sample->timestamp_ms;
-    active.count++;
-    active.pm2_5_sum += sample->pm2_5;
-    active.pm10_0_sum += sample->pm10_0;
-    if (sample->pm2_5 < active.pm2_5_min) active.pm2_5_min = sample->pm2_5;
-    if (sample->pm2_5 > active.pm2_5_max) active.pm2_5_max = sample->pm2_5;
-    if (sample->pm10_0 < active.pm10_0_min) active.pm10_0_min = sample->pm10_0;
-    if (sample->pm10_0 > active.pm10_0_max) active.pm10_0_max = sample->pm10_0;
-    if (sample->has_temperature) {
-        if (active.temperature_count == 0) {
-            active.temperature_min = sample->temperature_c;
-            active.temperature_max = sample->temperature_c;
-        }
-        active.temperature_count++;
-        active.temperature_sum += sample->temperature_c;
-        if (sample->temperature_c < active.temperature_min) {
-            active.temperature_min = sample->temperature_c;
-        }
-        if (sample->temperature_c > active.temperature_max) {
-            active.temperature_max = sample->temperature_c;
-        }
-    }
-    if (sample->has_humidity) {
-        if (active.humidity_count == 0) {
-            active.humidity_min = sample->humidity_percent;
-            active.humidity_max = sample->humidity_percent;
-        }
-        active.humidity_count++;
-        active.humidity_sum += sample->humidity_percent;
-        if (sample->humidity_percent < active.humidity_min) {
-            active.humidity_min = sample->humidity_percent;
-        }
-        if (sample->humidity_percent > active.humidity_max) {
-            active.humidity_max = sample->humidity_percent;
-        }
-    }
+    active_add_sample_values(sample);
 
     xSemaphoreGive(store_mutex);
 }

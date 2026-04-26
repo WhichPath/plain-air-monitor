@@ -12,6 +12,9 @@
 
 static const char *TAG = "sensor_service";
 
+#define SHT45_RETRY_INTERVAL_SAMPLES 5
+#define SPS30_REINIT_FAILURES 10
+
 static SemaphoreHandle_t sensor_mutex;
 static sensor_sample_t latest_sample;
 static sensor_sample_t *history;
@@ -66,6 +69,29 @@ static void add_sht45_to_sample(sensor_sample_t *out,
     out->has_humidity = true;
 }
 
+static bool read_sht45_into_sample(sensor_sample_t *sample) {
+    pm_sht45_sample_t sht45_sample;
+    esp_err_t err = pm_sht45_read(&sht45_sample);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    add_sht45_to_sample(sample, &sht45_sample);
+    ESP_LOGI(TAG, "SHT45 sample: temperature=%.2f C humidity=%.2f %%RH",
+             sample->temperature_c,
+             sample->humidity_percent);
+    return true;
+}
+
+static void wait_for_sps30(void) {
+    int failures = 0;
+    while (pm_sps30_init() != ESP_OK) {
+        failures++;
+        ESP_LOGW(TAG, "SPS30 init retry in 5s (failures=%d)", failures);
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
 static void history_add(const sensor_sample_t *sample) {
     if (!sample || !sensor_mutex || !history) {
         return;
@@ -89,15 +115,7 @@ static void sensor_task(void *arg) {
     int sht45_retry_countdown = 0;
     bool sht45_ready = false;
 
-    while (1) {
-        if (pm_sps30_init() == ESP_OK) {
-            consecutive_failures = 0;
-            break;
-        }
-        consecutive_failures++;
-        ESP_LOGW(TAG, "SPS30 init retry in 5s (failures=%d)", consecutive_failures);
-        vTaskDelay(pdMS_TO_TICKS(5000));
-    }
+    wait_for_sps30();
 
     sht45_ready = (pm_sht45_init() == ESP_OK);
     if (!sht45_ready) {
@@ -114,24 +132,15 @@ static void sensor_task(void *arg) {
             if (!sht45_ready) {
                 if (sht45_retry_countdown <= 0) {
                     sht45_ready = (pm_sht45_init() == ESP_OK);
-                    sht45_retry_countdown = 5;
+                    sht45_retry_countdown = SHT45_RETRY_INTERVAL_SAMPLES;
                 } else {
                     sht45_retry_countdown--;
                 }
             }
 
-            if (sht45_ready) {
-                pm_sht45_sample_t sht45_sample;
-                esp_err_t sht45_err = pm_sht45_read(&sht45_sample);
-                if (sht45_err == ESP_OK) {
-                    add_sht45_to_sample(&sample, &sht45_sample);
-                    ESP_LOGI(TAG, "SHT45 sample: temperature=%.2f C humidity=%.2f %%RH",
-                             sample.temperature_c,
-                             sample.humidity_percent);
-                } else {
-                    sht45_ready = false;
-                    sht45_retry_countdown = 5;
-                }
+            if (sht45_ready && !read_sht45_into_sample(&sample)) {
+                sht45_ready = false;
+                sht45_retry_countdown = SHT45_RETRY_INTERVAL_SAMPLES;
             }
 
             consecutive_failures = 0;
@@ -142,12 +151,10 @@ static void sensor_task(void *arg) {
         } else {
             read_failures++;
             consecutive_failures++;
-            if (consecutive_failures >= 10) {
+            if (consecutive_failures >= SPS30_REINIT_FAILURES) {
                 ESP_LOGW(TAG, "too many SPS30 read failures, reinitializing");
                 pm_sps30_stop();
-                while (pm_sps30_init() != ESP_OK) {
-                    vTaskDelay(pdMS_TO_TICKS(5000));
-                }
+                wait_for_sps30();
                 consecutive_failures = 0;
             }
         }
