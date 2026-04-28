@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "src/pm_sgp41.c"
+        "vendor/sgp41_i2c.c"
+        "vendor_gas/sensirion_gas_index_algorithm.c"
+    INCLUDE_DIRS
+        "include"
+        "vendor"
+        "vendor_gas"
+    REQUIRES
+        esp_timer
+        i2c_bus
+)

@@ -1,11 +1,11 @@
 idf_component_register(
     SRCS
-        "src/pm_sht45.c"
-        "vendor_sht4x/sht4x_i2c.c"
+        "src/pm_bmp581.c"
+        "vendor/bmp5.c"
     INCLUDE_DIRS
         "include"
-        "vendor_sht4x"
+        "vendor"
     REQUIRES
-        i2c_bus
         esp_timer
+        i2c_bus
 )

@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "src/i2c_bus.c"
+        "vendor/sensirion_common.c"
+        "vendor/sensirion_i2c.c"
+    INCLUDE_DIRS
+        "include"
+        "vendor"
+    REQUIRES
+        driver
+        esp_timer
+        freertos
+)

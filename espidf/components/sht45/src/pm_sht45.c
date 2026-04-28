@@ -2,8 +2,9 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "sensirion_i2c.h"
-#include "sht4x.h"
+#include "sensirion_common.h"
+#include "sensirion_i2c_hal.h"
+#include "sht4x_i2c.h"
 #include <string.h>
 
 static const char *TAG = "pm_sht45";
@@ -27,11 +28,12 @@ esp_err_t pm_sht45_init(void) {
     s_status.last_error = 0;
     s_status.detected = false;
 
-    sensirion_i2c_init();
+    sensirion_i2c_hal_init();
+    sht4x_init(SHT45_I2C_ADDR_44);
 
     uint32_t serial = 0;
-    int16_t rc = sht4x_read_serial(&serial);
-    if (rc != STATUS_OK) {
+    int16_t rc = sht4x_serial_number(&serial);
+    if (rc != NO_ERROR) {
         ESP_LOGW(TAG, "SHT45 probe failed on I2C%d SDA=%d SCL=%d addr=0x%02x rc=%d",
                  PM_SHT45_I2C_NUM,
                  PM_SHT45_I2C_SDA_GPIO,
@@ -67,9 +69,9 @@ esp_err_t pm_sht45_read(pm_sht45_sample_t *out) {
 
     int32_t temperature_milli_c = 0;
     int32_t humidity_milli_percent = 0;
-    int16_t rc = sht4x_measure_blocking_read(&temperature_milli_c,
-                                             &humidity_milli_percent);
-    if (rc != STATUS_OK) {
+    int16_t rc = sht4x_measure_high_precision(&temperature_milli_c,
+                                              &humidity_milli_percent);
+    if (rc != NO_ERROR) {
         s_status.last_error = rc;
         s_status.error_count++;
         ESP_LOGW(TAG, "read failed: %d", rc);

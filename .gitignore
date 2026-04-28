@@ -1,5 +1,6 @@
 .tools/
 espidf/build/
+reference/upstream/
 espidf/sdkconfig
 espidf/sdkconfig.old
 espidf/sdkconfig.credentials

@@ -846,7 +846,6 @@ static int do_register(microlink_t *ml, ml_noise_state_t *noise) {
     }
 
     /* Parse H2 frames from accumulated buffer */
-    bool got_end_stream = false;
     int fpos = 0;
     while (fpos + 9 <= (int)h2_resp_len) {
         uint32_t f_len = (h2_resp[fpos] << 16) | (h2_resp[fpos + 1] << 8) | h2_resp[fpos + 2];
@@ -872,9 +871,7 @@ static int do_register(microlink_t *ml, ml_noise_state_t *noise) {
                     memcpy(resp_buf + resp_total, h2_resp + fpos, f_len);
                     resp_total += f_len;
                 }
-                if (f_flags & 0x01) got_end_stream = true;
             }
-            if (f_type == 0x01 && (f_flags & 0x01)) got_end_stream = true;
         }
 
         fpos += f_len;
@@ -2017,6 +2014,8 @@ static int poll_map_update(microlink_t *ml, ml_noise_state_t *noise) {
     size_t json_data_len = 0;
     uint32_t total_data_bytes = 0;
     uint32_t data_stream_id = 0;
+    bool map_stream_closed = false;
+    bool connection_goaway = false;
     int pos = 0;
 
     while (pos + 9 <= frame_len) {
@@ -2043,6 +2042,19 @@ static int poll_map_update(microlink_t *ml, ml_noise_state_t *noise) {
                 ESP_LOGD(TAG, "H2 stream %lu DATA: %lu bytes (discarded)",
                          (unsigned long)f_stream, (unsigned long)f_len);
             }
+            if (f_stream == 5 && (f_flags & 0x01)) {
+                map_stream_closed = true;
+            }
+        } else if (f_type == 0x01) {  /* HEADERS frame */
+            if (f_stream == 5 && (f_flags & 0x01)) {
+                map_stream_closed = true;
+            }
+        } else if (f_type == 0x03) {  /* RST_STREAM */
+            if (f_stream == 5) {
+                map_stream_closed = true;
+            }
+        } else if (f_type == 0x07) {  /* GOAWAY */
+            connection_goaway = true;
         } else if (f_type == 0x06 && f_len == 8 && !(f_flags & 0x01)) {
             /* HTTP/2 PING from server — respond with PONG (same payload, ACK flag) */
             uint8_t pong[17];
@@ -2073,6 +2085,13 @@ static int poll_map_update(microlink_t *ml, ml_noise_state_t *noise) {
                                                   data_stream_id, total_data_bytes);
         }
         noise_send(ml, noise, wu_buf, wu_len);
+    }
+
+    if (connection_goaway || map_stream_closed) {
+        ESP_LOGW(TAG, "Control stream ended (goaway=%d stream_closed=%d)",
+                 connection_goaway, map_stream_closed);
+        free(frame_buf);
+        return -1;
     }
 
     if (!json_data || json_data_len == 0) {
@@ -2291,7 +2310,11 @@ void ml_coord_task(void *arg) {
 
             /* Start streaming long-poll for incremental updates */
             if (do_start_long_poll(ml, &noise) < 0) {
-                ESP_LOGW(TAG, "Failed to start long-poll (non-fatal)");
+                ESP_LOGW(TAG, "Failed to start long-poll, reconnecting");
+                ml_close_sock(ml->coord_sock);
+                ml->coord_sock = -1;
+                state = COORD_RECONNECTING;
+                break;
             }
 
             /* Send initial endpoint update if STUN already completed.
@@ -2504,9 +2527,9 @@ void ml_coord_task(void *arg) {
                     }
                 }
 
-                /* Send HTTP/2 PING every 5 seconds to keep control plane alive.
-                 * The server has a ~20s idle timeout; PINGs maintain bidirectional
-                 * activity and are what actually keep us "online". (v1 reference) */
+                /* Send HTTP/2 PING every 5 seconds to keep the transport alive.
+                 * Only inbound control frames refresh last_activity_ms; a local
+                 * write can succeed even after the map stream is no longer useful. */
                 static uint64_t last_h2_ping_ms = 0;
                 if (now - last_h2_ping_ms >= 5000) {
                     uint8_t ping_frame[17];
@@ -2522,7 +2545,6 @@ void ml_coord_task(void *arg) {
                     int ping_ret = noise_send(ml, &noise, ping_frame, sizeof(ping_frame));
                     if (ping_ret >= 0) {
                         last_h2_ping_ms = now;
-                        last_activity_ms = now;
                     } else {
                         ESP_LOGW(TAG, "H2 PING send failed, reconnecting");
                         state = COORD_RECONNECTING;

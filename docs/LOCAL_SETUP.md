@@ -53,16 +53,21 @@ Runtime services:
 - Metrics API: `/api/metrics`
 - Recent in-memory history API: `/api/history`
 - Aggregate data API: `/api/data`
+- Data export API: `/api/export?format=csv|json[&days=N]`
+- Browser OTA upload API: `/api/ota`
 - Diagnostic UDP echo: `<ESP32_TAILSCALE_IP>:9000/udp`
 
 Storage behavior:
 - Latest sample and fine-grained recent history stay in RAM/PSRAM only.
 - Browser-side charts also keep session-only data in the requesting device's memory.
-- Completed 10-minute PM aggregates are persisted to the ESP32 `data` flash partition.
+- Completed 10-minute sensor aggregates are persisted to the ESP32 `data` flash partition.
 - The `data` partition is an append-only ring. NVS remains for Wi-Fi, MicroLink keys, peer cache, and small configuration.
-- Aggregate records currently store PM2.5 and PM10 avg/min/max plus sample count. Temperature/humidity fields are reserved for the planned sensor.
+- Aggregate records store PM2.5, PM10, SHT45 temperature/humidity, BMP581
+  pressure, SCD41 CO2, and SGP41 VOC/NOx avg/min/max/count plus field flags.
 
-The firmware uses a custom 16MB partition table with a 256KB NVS partition and a large `data` partition. When moving from the earlier build to this layout, erase flash once:
+The firmware uses a custom 16MB OTA partition table: 256KB NVS, 8KB `otadata`,
+two 4MB OTA app slots, and a 0x7B0000-byte `data` partition. When moving from
+the earlier single-app layout to this layout, erase flash once:
 
 ```bash
 idf.py -C espidf -p /dev/ttyACM0 erase-flash flash monitor
@@ -75,7 +80,16 @@ SPS30 wiring defaults:
 - Sensor UART TX on ESP32-S3: `GPIO17`
 - Baud rate: `115200`
 
-The web page is static HTML/CSS/JS served by the ESP32. Chart rendering and UI updates run in the requesting browser. The ESP32 only samples SPS30 data, keeps a small in-memory history ring, and returns JSON.
+SHT45 wiring defaults:
+- I2C bus: `I2C0`
+- SDA: `GPIO43`
+- SCL: `GPIO44`
+- Address: `0x44`
+- Bus speed: `100000`
+
+The web page is static HTML/CSS/JS served by the ESP32. Chart rendering and UI
+updates run in the requesting browser. The ESP32 samples SPS30 and SHT45 data,
+keeps a small in-memory history ring, and returns JSON.
 
 Current verification:
 - `idf.py -C espidf build` completed successfully.
@@ -84,3 +98,5 @@ Current verification:
 - T-Display-S3 flash defaults are set in `espidf/sdkconfig.defaults` as 16MB, QIO, 80MHz, with OPI PSRAM enabled.
 - On the attached ESP32-S3, local Wi-Fi dashboard/API responded on port 80 at `192.168.1.196`.
 - SPS30 readout was verified through `/api/metrics` and `/api/history` with `sensor.state=measuring`, increasing `read_count`, and `error_count=0`.
+- SHT45 support is present in the firmware and exposed through `/api/metrics`,
+  `/api/history`, and `/api/data` when the sensor is detected.

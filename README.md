@@ -6,8 +6,10 @@ Included:
 - `espidf/`: minimal ESP-IDF seed project
 - `espidf/components/microlink/`: vendored `microlink` component
 - `espidf/components/wireguard_lwip/`: dependency used by `microlink`
-- `reference/sps30/`: SPS30 sensor integration reference
+- `reference/sps30/`: legacy SPS30 sensor integration reference
 - `reference/board/`: board reference
+- `reference/upstream/`: ignored local clones of official board/sensor reference
+  repositories; see `docs/REFERENCE_REPOS.md`
 
 Intentionally excluded:
 - PlatformIO build output
@@ -37,11 +39,12 @@ Runtime ports:
 
 Recommended order:
 1. Bring up `espidf/` first as a connectivity baseline
-2. Port in `reference/sps30/`
-3. Add your own web and history layer after tailnet connectivity is stable
+2. Keep SPS30 and SHT45 sampling stable
+3. Add future I2C sensors through a shared I2C bus layer before extending the web/API surface
 
 Notes:
-- `espidf/main/main.c` starts Wi-Fi, MicroLink, the SPS30 sampling task, a lightweight HTTP dashboard, and the UDP diagnostic echo.
+- `espidf/main/main.c` starts Wi-Fi, MicroLink, sensor sampling, a lightweight HTTP dashboard, and the UDP diagnostic echo.
 - `sdkconfig.defaults` keeps the upstream config HTTP server disabled by default.
 - `microlink` stores config and peer data in NVS. For a real deployment, plan around flash encryption.
-- Recent raw samples are RAM/PSRAM-only. Completed 10-minute aggregates are stored in the dedicated `data` flash partition as an append-only ring.
+- Firmware uses dual OTA app slots; browser OTA upload is served by the dashboard.
+- Recent raw samples are RAM/PSRAM-only. Completed 10-minute sensor aggregates are stored in the dedicated `data` flash partition as an append-only ring.

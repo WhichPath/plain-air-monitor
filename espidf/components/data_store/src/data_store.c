@@ -12,75 +12,68 @@
 static const char *TAG = "data_store";
 
 #define DATA_PARTITION_LABEL "data"
-#define DATA_RECORD_MAGIC 0x504D4431u
-#define DATA_RECORD_VERSION 3u
-#define DATA_RECORD_SIZE 128u
+#define DATA_RECORD_MAGIC 0x51444132u
+#define DATA_RECORD_VERSION 4u
+#define DATA_RECORD_SIZE 256u
 #define DATA_FLASH_SECTOR_SIZE 4096u
+
+typedef struct {
+    float avg;
+    float min;
+    float max;
+    uint16_t count;
+    uint16_t reserved;
+} flash_field_stat_t;
 
 typedef struct {
     uint32_t magic;
     uint16_t version;
     uint16_t size;
     uint32_t seq;
-    int64_t start_ms;
-    int64_t end_ms;
-    int64_t start_epoch_ms;
     int64_t end_epoch_ms;
-    uint32_t duration_ms;
-    uint16_t sample_count;
+    uint16_t frame_count;
     uint16_t field_mask;
-    float pm2_5_avg;
-    float pm2_5_min;
-    float pm2_5_max;
-    float pm10_0_avg;
-    float pm10_0_min;
-    float pm10_0_max;
-    float temperature_avg;
-    float temperature_min;
-    float temperature_max;
-    float humidity_avg;
-    float humidity_min;
-    float humidity_max;
+    flash_field_stat_t pm2_5;
+    flash_field_stat_t pm10_0;
+    flash_field_stat_t temperature;
+    flash_field_stat_t humidity;
+    flash_field_stat_t pressure;
+    flash_field_stat_t co2;
+    flash_field_stat_t voc_index;
+    flash_field_stat_t nox_index;
     uint32_t crc32;
-    uint8_t reserved[20];
+    uint8_t reserved[96];
 } flash_data_record_t;
-
-typedef struct {
-    int64_t start_ms;
-    int64_t start_epoch_ms;
-    int64_t last_sample_ms;
-    int64_t elapsed_ms;
-    uint32_t count;
-    double pm2_5_sum;
-    double pm10_0_sum;
-    double temperature_sum;
-    double humidity_sum;
-    float pm2_5_min;
-    float pm2_5_max;
-    float pm10_0_min;
-    float pm10_0_max;
-    float temperature_min;
-    float temperature_max;
-    float humidity_min;
-    float humidity_max;
-    uint32_t temperature_count;
-    uint32_t humidity_count;
-} data_accumulator_t;
 
 typedef struct {
     double sum;
     float min;
     float max;
     uint32_t count;
-} scalar_accumulator_t;
+} field_accumulator_t;
+
+typedef struct {
+    int64_t end_epoch_ms;
+    uint32_t frame_count;
+    field_accumulator_t pm2_5;
+    field_accumulator_t pm10_0;
+    field_accumulator_t temperature;
+    field_accumulator_t humidity;
+    field_accumulator_t pressure;
+    field_accumulator_t co2;
+    field_accumulator_t voc_index;
+    field_accumulator_t nox_index;
+} data_accumulator_t;
 
 typedef struct {
     uint32_t seq;
     uint32_t slot;
 } record_index_t;
 
+_Static_assert(sizeof(flash_field_stat_t) == 16,
+               "flash_field_stat_t must stay 16 bytes");
 _Static_assert(sizeof(flash_data_record_t) == DATA_RECORD_SIZE,
-               "flash_data_record_t must stay one 128-byte flash slot");
+               "flash_data_record_t must stay one 256-byte flash slot");
 _Static_assert((DATA_FLASH_SECTOR_SIZE % DATA_RECORD_SIZE) == 0,
                "record size must divide flash sector size");
 
@@ -100,35 +93,36 @@ static uint32_t record_crc(const flash_data_record_t *record) {
                             offsetof(flash_data_record_t, crc32));
 }
 
-static void flash_to_public_record(const flash_data_record_t *in, data_record_t *out) {
+static void public_stat_from_flash(const flash_field_stat_t *in,
+                                   data_field_stat_t *out) {
+    out->avg = in->avg;
+    out->min = in->min;
+    out->max = in->max;
+    out->count = in->count;
+}
+
+static void flash_to_public_record(const flash_data_record_t *in,
+                                   data_record_t *out) {
     memset(out, 0, sizeof(*out));
     out->seq = in->seq;
-    out->start_ms = in->start_ms;
-    out->end_ms = in->end_ms;
-    out->start_epoch_ms = in->start_epoch_ms;
     out->end_epoch_ms = in->end_epoch_ms;
-    out->duration_ms = in->duration_ms;
-    out->sample_count = in->sample_count;
+    out->frame_count = in->frame_count;
     out->field_mask = in->field_mask;
-    out->pm2_5_avg = in->pm2_5_avg;
-    out->pm2_5_min = in->pm2_5_min;
-    out->pm2_5_max = in->pm2_5_max;
-    out->pm10_0_avg = in->pm10_0_avg;
-    out->pm10_0_min = in->pm10_0_min;
-    out->pm10_0_max = in->pm10_0_max;
-    out->temperature_avg = in->temperature_avg;
-    out->temperature_min = in->temperature_min;
-    out->temperature_max = in->temperature_max;
-    out->humidity_avg = in->humidity_avg;
-    out->humidity_min = in->humidity_min;
-    out->humidity_max = in->humidity_max;
+    public_stat_from_flash(&in->pm2_5, &out->pm2_5);
+    public_stat_from_flash(&in->pm10_0, &out->pm10_0);
+    public_stat_from_flash(&in->temperature, &out->temperature);
+    public_stat_from_flash(&in->humidity, &out->humidity);
+    public_stat_from_flash(&in->pressure, &out->pressure);
+    public_stat_from_flash(&in->co2, &out->co2);
+    public_stat_from_flash(&in->voc_index, &out->voc_index);
+    public_stat_from_flash(&in->nox_index, &out->nox_index);
 }
 
 static bool record_valid(const flash_data_record_t *record) {
     return record->magic == DATA_RECORD_MAGIC &&
            record->version == DATA_RECORD_VERSION &&
            record->size == DATA_RECORD_SIZE &&
-           record->sample_count > 0 &&
+           record->frame_count > 0 &&
            record->crc32 == record_crc(record);
 }
 
@@ -220,28 +214,20 @@ static esp_err_t slot_write(uint32_t slot, const flash_data_record_t *record) {
                                sizeof(*record));
 }
 
-static int64_t bucket_start_epoch_ms(int64_t epoch_ms) {
-    return (epoch_ms / DATA_RECORD_WINDOW_MS) * DATA_RECORD_WINDOW_MS;
-}
-
-static int64_t aligned_uptime_ms(int64_t sample_uptime_ms,
-                                 int64_t sample_epoch_ms,
-                                 int64_t target_epoch_ms) {
-    int64_t delta_ms = sample_epoch_ms - target_epoch_ms;
-    if (delta_ms <= 0) {
-        return sample_uptime_ms;
+static int64_t bucket_end_epoch_ms(int64_t epoch_ms) {
+    if (epoch_ms <= 0) {
+        return DATA_RECORD_WINDOW_MS;
     }
-    return (sample_uptime_ms > delta_ms) ? sample_uptime_ms - delta_ms : 0;
+    return (((epoch_ms - 1) / DATA_RECORD_WINDOW_MS) + 1) *
+           DATA_RECORD_WINDOW_MS;
 }
 
-static void active_reset(int64_t start_ms, int64_t start_epoch_ms) {
+static void active_reset(int64_t end_epoch_ms) {
     memset(&active, 0, sizeof(active));
-    active.start_ms = start_ms;
-    active.start_epoch_ms = start_epoch_ms;
-    active.last_sample_ms = start_ms;
+    active.end_epoch_ms = end_epoch_ms;
 }
 
-static void scalar_add(scalar_accumulator_t *acc, float value) {
+static void field_add(field_accumulator_t *acc, float value) {
     if (acc->count == 0) {
         acc->min = value;
         acc->max = value;
@@ -257,70 +243,64 @@ static void scalar_add(scalar_accumulator_t *acc, float value) {
     acc->count++;
 }
 
-static void active_add_sample_values(const sensor_sample_t *sample) {
-    scalar_accumulator_t pm25 = {
-        .sum = active.pm2_5_sum,
-        .min = active.pm2_5_min,
-        .max = active.pm2_5_max,
-        .count = active.count,
-    };
-    scalar_accumulator_t pm10 = {
-        .sum = active.pm10_0_sum,
-        .min = active.pm10_0_min,
-        .max = active.pm10_0_max,
-        .count = active.count,
-    };
-
-    scalar_add(&pm25, sample->pm2_5);
-    scalar_add(&pm10, sample->pm10_0);
-    active.count = pm25.count;
-    active.pm2_5_sum = pm25.sum;
-    active.pm2_5_min = pm25.min;
-    active.pm2_5_max = pm25.max;
-    active.pm10_0_sum = pm10.sum;
-    active.pm10_0_min = pm10.min;
-    active.pm10_0_max = pm10.max;
-
-    if (sample->has_temperature) {
-        scalar_accumulator_t temperature = {
-            .sum = active.temperature_sum,
-            .min = active.temperature_min,
-            .max = active.temperature_max,
-            .count = active.temperature_count,
-        };
-        scalar_add(&temperature, sample->temperature_c);
-        active.temperature_sum = temperature.sum;
-        active.temperature_min = temperature.min;
-        active.temperature_max = temperature.max;
-        active.temperature_count = temperature.count;
+static uint16_t field_mask_for_active(void) {
+    uint16_t mask = 0;
+    if (active.pm2_5.count > 0) {
+        mask |= DATA_FIELD_PM25;
     }
-
-    if (sample->has_humidity) {
-        scalar_accumulator_t humidity = {
-            .sum = active.humidity_sum,
-            .min = active.humidity_min,
-            .max = active.humidity_max,
-            .count = active.humidity_count,
-        };
-        scalar_add(&humidity, sample->humidity_percent);
-        active.humidity_sum = humidity.sum;
-        active.humidity_min = humidity.min;
-        active.humidity_max = humidity.max;
-        active.humidity_count = humidity.count;
+    if (active.pm10_0.count > 0) {
+        mask |= DATA_FIELD_PM10;
     }
+    if (active.temperature.count > 0) {
+        mask |= DATA_FIELD_TEMPERATURE;
+    }
+    if (active.humidity.count > 0) {
+        mask |= DATA_FIELD_HUMIDITY;
+    }
+    if (active.pressure.count > 0) {
+        mask |= DATA_FIELD_PRESSURE;
+    }
+    if (active.co2.count > 0) {
+        mask |= DATA_FIELD_CO2;
+    }
+    if (active.voc_index.count > 0) {
+        mask |= DATA_FIELD_VOC_INDEX;
+    }
+    if (active.nox_index.count > 0) {
+        mask |= DATA_FIELD_NOX_INDEX;
+    }
+    return mask;
+}
+
+static flash_field_stat_t flash_stat_from_acc(const field_accumulator_t *acc) {
+    flash_field_stat_t out = {0};
+    if (acc->count > 0) {
+        out.avg = (float)(acc->sum / acc->count);
+        out.min = acc->min;
+        out.max = acc->max;
+        out.count = (acc->count > UINT16_MAX) ? UINT16_MAX : (uint16_t)acc->count;
+    }
+    return out;
+}
+
+static data_field_stat_t public_stat_from_acc(const field_accumulator_t *acc) {
+    data_field_stat_t out = {0};
+    if (acc->count > 0) {
+        out.avg = (float)(acc->sum / acc->count);
+        out.min = acc->min;
+        out.max = acc->max;
+        out.count = (acc->count > UINT16_MAX) ? UINT16_MAX : (uint16_t)acc->count;
+    }
+    return out;
 }
 
 static void append_record_locked(void) {
-    if (!data_partition || active.count == 0 || record_capacity == 0) {
+    if (!data_partition || active.frame_count == 0 || record_capacity == 0) {
         return;
     }
-
-    uint16_t field_mask = DATA_FIELD_PM25 | DATA_FIELD_PM10;
-    if (active.temperature_count > 0) {
-        field_mask |= DATA_FIELD_TEMPERATURE;
-    }
-    if (active.humidity_count > 0) {
-        field_mask |= DATA_FIELD_HUMIDITY;
+    uint16_t field_mask = field_mask_for_active();
+    if (field_mask == 0) {
+        return;
     }
 
     flash_data_record_t record = {
@@ -328,30 +308,20 @@ static void append_record_locked(void) {
         .version = DATA_RECORD_VERSION,
         .size = DATA_RECORD_SIZE,
         .seq = next_seq++,
-        .start_ms = active.start_ms,
-        .end_ms = active.start_ms + DATA_RECORD_WINDOW_MS,
-        .start_epoch_ms = active.start_epoch_ms,
-        .end_epoch_ms = active.start_epoch_ms + DATA_RECORD_WINDOW_MS,
-        .duration_ms = (uint32_t)DATA_RECORD_WINDOW_MS,
-        .sample_count = (active.count > UINT16_MAX) ? UINT16_MAX : (uint16_t)active.count,
+        .end_epoch_ms = active.end_epoch_ms,
+        .frame_count = (active.frame_count > UINT16_MAX)
+                           ? UINT16_MAX
+                           : (uint16_t)active.frame_count,
         .field_mask = field_mask,
-        .pm2_5_avg = (float)(active.pm2_5_sum / active.count),
-        .pm2_5_min = active.pm2_5_min,
-        .pm2_5_max = active.pm2_5_max,
-        .pm10_0_avg = (float)(active.pm10_0_sum / active.count),
-        .pm10_0_min = active.pm10_0_min,
-        .pm10_0_max = active.pm10_0_max,
+        .pm2_5 = flash_stat_from_acc(&active.pm2_5),
+        .pm10_0 = flash_stat_from_acc(&active.pm10_0),
+        .temperature = flash_stat_from_acc(&active.temperature),
+        .humidity = flash_stat_from_acc(&active.humidity),
+        .pressure = flash_stat_from_acc(&active.pressure),
+        .co2 = flash_stat_from_acc(&active.co2),
+        .voc_index = flash_stat_from_acc(&active.voc_index),
+        .nox_index = flash_stat_from_acc(&active.nox_index),
     };
-    if (active.temperature_count > 0) {
-        record.temperature_avg = (float)(active.temperature_sum / active.temperature_count);
-        record.temperature_min = active.temperature_min;
-        record.temperature_max = active.temperature_max;
-    }
-    if (active.humidity_count > 0) {
-        record.humidity_avg = (float)(active.humidity_sum / active.humidity_count);
-        record.humidity_min = active.humidity_min;
-        record.humidity_max = active.humidity_max;
-    }
     record.crc32 = record_crc(&record);
 
     esp_err_t err = slot_write(write_slot, &record);
@@ -365,22 +335,16 @@ static void append_record_locked(void) {
     write_slot = (write_slot + 1) % record_capacity;
     if (record_index && record_count < record_capacity) {
         record_index[record_count].seq = record.seq;
-        record_index[record_count].slot = (write_slot + record_capacity - 1) % record_capacity;
+        record_index[record_count].slot =
+            (write_slot + record_capacity - 1) % record_capacity;
         record_count++;
     }
 
-    ESP_LOGI(TAG, "data saved: seq=%lu samples=%u fields=0x%x PM2.5 avg/min/max=%.2f/%.2f/%.2f PM10 avg/min/max=%.2f/%.2f/%.2f T/RH avg=%.2f/%.2f",
+    ESP_LOGI(TAG, "data saved: seq=%lu end_epoch=%lld frames=%u fields=0x%x",
              (unsigned long)record.seq,
-             record.sample_count,
-             record.field_mask,
-             record.pm2_5_avg,
-             record.pm2_5_min,
-             record.pm2_5_max,
-             record.pm10_0_avg,
-             record.pm10_0_min,
-             record.pm10_0_max,
-             record.temperature_avg,
-             record.humidity_avg);
+             (long long)record.end_epoch_ms,
+             record.frame_count,
+             record.field_mask);
 }
 
 static void scan_partition_locked(void) {
@@ -408,7 +372,8 @@ static void scan_partition_locked(void) {
     }
 
     if (record_count > 0) {
-        qsort(record_index, record_count, sizeof(record_index[0]), record_index_compare);
+        qsort(record_index, record_count, sizeof(record_index[0]),
+              record_index_compare);
         next_seq = max_seq + 1;
         write_slot = (max_slot + 1) % record_capacity;
         for (uint32_t i = 0; i < record_capacity; i++) {
@@ -456,7 +421,7 @@ esp_err_t data_store_init(void) {
         return ESP_ERR_TIMEOUT;
     }
     scan_partition_locked();
-    active_reset(0, 0);
+    active_reset(0);
     xSemaphoreGive(store_mutex);
 
     ESP_LOGI(TAG, "data partition ready: offset=0x%lx size=%lu records=%lu/%lu next_seq=%lu",
@@ -474,55 +439,50 @@ void data_store_add_sample(const sensor_sample_t *sample, void *user_data) {
         return;
     }
 
+    int64_t sample_epoch_ms = 0;
+    if (!time_service_uptime_to_epoch_ms(sample->timestamp_ms,
+                                         &sample_epoch_ms)) {
+        return;
+    }
+
     if (xSemaphoreTake(store_mutex, pdMS_TO_TICKS(200)) != pdTRUE) {
         return;
     }
 
-    int64_t sample_epoch_ms = 0;
-    if (!time_service_uptime_to_epoch_ms(sample->timestamp_ms, &sample_epoch_ms)) {
-        if (active.count > 0) {
-            active_reset(0, 0);
-        }
-        xSemaphoreGive(store_mutex);
-        return;
-    }
-
-    int64_t bucket_epoch_ms = bucket_start_epoch_ms(sample_epoch_ms);
-    int64_t bucket_uptime_ms = aligned_uptime_ms(sample->timestamp_ms,
-                                                 sample_epoch_ms,
-                                                 bucket_epoch_ms);
-
-    if (active.count == 0) {
-        active_reset(bucket_uptime_ms, bucket_epoch_ms);
-        active.pm2_5_min = sample->pm2_5;
-        active.pm2_5_max = sample->pm2_5;
-        active.pm10_0_min = sample->pm10_0;
-        active.pm10_0_max = sample->pm10_0;
-    } else if (bucket_epoch_ms < active.start_epoch_ms) {
+    int64_t bucket_end = bucket_end_epoch_ms(sample_epoch_ms);
+    if (active.frame_count == 0) {
+        active_reset(bucket_end);
+    } else if (bucket_end < active.end_epoch_ms) {
         ESP_LOGW(TAG, "time moved backwards, dropping active partial bucket");
-        active_reset(bucket_uptime_ms, bucket_epoch_ms);
-        active.pm2_5_min = sample->pm2_5;
-        active.pm2_5_max = sample->pm2_5;
-        active.pm10_0_min = sample->pm10_0;
-        active.pm10_0_max = sample->pm10_0;
-    } else if (bucket_epoch_ms != active.start_epoch_ms) {
+        active_reset(bucket_end);
+    } else if (bucket_end != active.end_epoch_ms) {
         append_record_locked();
-        active_reset(bucket_uptime_ms, bucket_epoch_ms);
-        active.pm2_5_min = sample->pm2_5;
-        active.pm2_5_max = sample->pm2_5;
-        active.pm10_0_min = sample->pm10_0;
-        active.pm10_0_max = sample->pm10_0;
+        active_reset(bucket_end);
     }
 
-    int64_t elapsed_ms = sample_epoch_ms - active.start_epoch_ms;
-    if (elapsed_ms < 0) {
-        elapsed_ms = 0;
-    } else if (elapsed_ms > DATA_RECORD_WINDOW_MS) {
-        elapsed_ms = DATA_RECORD_WINDOW_MS;
+    active.frame_count++;
+    if (sample->pm_count > 0) {
+        field_add(&active.pm2_5, sample->pm2_5);
+        field_add(&active.pm10_0, sample->pm10_0);
     }
-    active.elapsed_ms = elapsed_ms;
-    active.last_sample_ms = sample->timestamp_ms;
-    active_add_sample_values(sample);
+    if (sample->has_temperature) {
+        field_add(&active.temperature, sample->temperature_c);
+    }
+    if (sample->has_humidity) {
+        field_add(&active.humidity, sample->humidity_percent);
+    }
+    if (sample->has_pressure) {
+        field_add(&active.pressure, sample->pressure_pa);
+    }
+    if (sample->has_co2) {
+        field_add(&active.co2, (float)sample->co2_ppm);
+    }
+    if (sample->has_voc_index) {
+        field_add(&active.voc_index, sample->voc_index);
+    }
+    if (sample->has_nox_index) {
+        field_add(&active.nox_index, sample->nox_index);
+    }
 
     xSemaphoreGive(store_mutex);
 }
@@ -551,35 +511,19 @@ void data_store_get_active_locked(data_active_t *out) {
     }
 
     memset(out, 0, sizeof(*out));
-    out->start_ms = active.start_ms;
-    out->start_epoch_ms = active.start_epoch_ms;
-    out->elapsed_ms = (uint32_t)active.elapsed_ms;
-    out->sample_count = (active.count > UINT16_MAX) ? UINT16_MAX : (uint16_t)active.count;
-    out->field_mask = DATA_FIELD_PM25 | DATA_FIELD_PM10;
-    if (active.temperature_count > 0) {
-        out->field_mask |= DATA_FIELD_TEMPERATURE;
-    }
-    if (active.humidity_count > 0) {
-        out->field_mask |= DATA_FIELD_HUMIDITY;
-    }
-    if (active.count > 0) {
-        out->pm2_5_avg = (float)(active.pm2_5_sum / active.count);
-        out->pm2_5_min = active.pm2_5_min;
-        out->pm2_5_max = active.pm2_5_max;
-        out->pm10_0_avg = (float)(active.pm10_0_sum / active.count);
-        out->pm10_0_min = active.pm10_0_min;
-        out->pm10_0_max = active.pm10_0_max;
-    }
-    if (active.temperature_count > 0) {
-        out->temperature_avg = (float)(active.temperature_sum / active.temperature_count);
-        out->temperature_min = active.temperature_min;
-        out->temperature_max = active.temperature_max;
-    }
-    if (active.humidity_count > 0) {
-        out->humidity_avg = (float)(active.humidity_sum / active.humidity_count);
-        out->humidity_min = active.humidity_min;
-        out->humidity_max = active.humidity_max;
-    }
+    out->end_epoch_ms = active.end_epoch_ms;
+    out->frame_count = (active.frame_count > UINT16_MAX)
+                           ? UINT16_MAX
+                           : (uint16_t)active.frame_count;
+    out->field_mask = field_mask_for_active();
+    out->pm2_5 = public_stat_from_acc(&active.pm2_5);
+    out->pm10_0 = public_stat_from_acc(&active.pm10_0);
+    out->temperature = public_stat_from_acc(&active.temperature);
+    out->humidity = public_stat_from_acc(&active.humidity);
+    out->pressure = public_stat_from_acc(&active.pressure);
+    out->co2 = public_stat_from_acc(&active.co2);
+    out->voc_index = public_stat_from_acc(&active.voc_index);
+    out->nox_index = public_stat_from_acc(&active.nox_index);
 }
 
 bool data_store_get_record_locked(uint32_t order, data_record_t *out) {
@@ -597,12 +541,13 @@ bool data_store_get_record_locked(uint32_t order, data_record_t *out) {
     return true;
 }
 
-void data_store_get_summary(uint32_t *stored, uint32_t *active_samples, float *active_pm25) {
+void data_store_get_summary(uint32_t *stored, uint32_t *active_frames,
+                            float *active_pm25) {
     if (stored) {
         *stored = 0;
     }
-    if (active_samples) {
-        *active_samples = 0;
+    if (active_frames) {
+        *active_frames = 0;
     }
     if (active_pm25) {
         *active_pm25 = 0.0f;
@@ -615,11 +560,11 @@ void data_store_get_summary(uint32_t *stored, uint32_t *active_samples, float *a
     if (stored) {
         *stored = record_count;
     }
-    if (active_samples) {
-        *active_samples = active.count;
+    if (active_frames) {
+        *active_frames = active.frame_count;
     }
-    if (active_pm25 && active.count > 0) {
-        *active_pm25 = (float)(active.pm2_5_sum / active.count);
+    if (active_pm25 && active.pm2_5.count > 0) {
+        *active_pm25 = (float)(active.pm2_5.sum / active.pm2_5.count);
     }
 
     data_store_unlock();
