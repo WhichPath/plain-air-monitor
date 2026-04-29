@@ -144,6 +144,10 @@
     function axisLabel(v,step){return Math.abs(step)<1?v.toFixed(1):(Math.abs(v)>=10?String(Math.round(v)):v.toFixed(1))}
     function hasValue(p,s){return p&&Number.isFinite(p[s.key])&&(!s.field||(p.field_mask&s.field))}
     function seriesValue(p,s){return p[s.key]*(s.scale||1)}
+    function statKey(s,kind){return s[kind+'Key']||s.key.replace(/_avg$/, '_'+kind)}
+    function hasStatValue(p,s,kind){const k=statKey(s,kind);return p&&Number.isFinite(p[k])&&(!s.field||(p.field_mask&s.field))}
+    function statValue(p,s,kind){return p[statKey(s,kind)]*(s.scale||1)}
+    function alphaColor(hex,a){let m=/^#?([0-9a-f]{6})$/i.exec(hex);if(!m)return hex;let n=parseInt(m[1],16);return'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'}
     function detailPoints(){
       const bucket=600000,latest=active&&active.end_epoch_ms?active.end_epoch_ms:records.length?records[records.length-1].end_epoch_ms:Math.floor(Date.now()/bucket)*bucket,start=latest-23*bucket;
       const source=active?records.concat([active]):records,byBucket=new Map(source.filter(p=>p.end_epoch_ms>0).map(p=>[p.end_epoch_ms,p]));
@@ -162,7 +166,11 @@
     }
     function drawBand(g,band,points,series){
       g.save();g.beginPath();g.rect(band.x-50,band.y,band.w+62,band.h);g.clip();
-      let vals=points.flatMap(p=>series.map(s=>hasValue(p,s)?seriesValue(p,s):NaN)).filter(Number.isFinite);
+      let vals=points.flatMap(p=>series.flatMap(s=>[
+        hasValue(p,s)?seriesValue(p,s):NaN,
+        hasStatValue(p,s,'min')?statValue(p,s,'min'):NaN,
+        hasStatValue(p,s,'max')?statValue(p,s,'max'):NaN
+      ])).filter(Number.isFinite);
       g.font='11px system-ui';g.textAlign='left';
       series.forEach((s,i)=>{let x=band.x+i*96,y=band.y+12;g.strokeStyle=s.color;g.lineWidth=2;g.beginPath();g.moveTo(x,y-4);g.lineTo(x+14,y-4);g.stroke();g.fillStyle='#9aa6b2';g.fillText(s.name,x+18,y)});
       if(!vals.length){g.fillStyle='#9aa6b2';g.textAlign='center';g.fillText('数据收集中',band.x+band.w/2,band.y+band.h/2);g.restore();return}
@@ -170,6 +178,17 @@
       g.fillStyle='#9aa6b2';g.textAlign='right';
       for(let v=b.min,i=0;v<=b.max+Math.abs(b.step*.01)&&i<6;v+=b.step,i++){let y=py(v);g.fillStyle='#9aa6b2';g.fillText(axisLabel(v,b.step),band.x-7,y+4);g.save();g.strokeStyle='#2a313d';g.setLineDash([3,5]);g.beginPath();g.moveTo(band.x,y);g.lineTo(band.x+band.w,y);g.stroke();g.restore()}
       series.forEach(s=>{
+        let bandPts=points.map((p,i)=>hasStatValue(p,s,'min')&&hasStatValue(p,s,'max')?{x:px(i),minY:py(statValue(p,s,'min')),maxY:py(statValue(p,s,'max'))}:null);
+        for(let i=0;i<bandPts.length;){
+          while(i<bandPts.length&&!bandPts[i])i++;
+          let start=i;
+          while(i<bandPts.length&&bandPts[i])i++;
+          if(i-start<2)continue;
+          g.save();g.fillStyle=alphaColor(s.color,.16);g.beginPath();
+          for(let j=start;j<i;j++){let p=bandPts[j];if(j===start)g.moveTo(p.x,p.maxY);else g.lineTo(p.x,p.maxY)}
+          for(let j=i-1;j>=start;j--){let p=bandPts[j];g.lineTo(p.x,p.minY)}
+          g.closePath();g.fill();g.restore();
+        }
         let prev=null;
         points.forEach((p,i)=>{if(!hasValue(p,s))return;let x=px(i),y=py(seriesValue(p,s));if(prev){g.save();g.strokeStyle=s.color;g.lineWidth=2;if(i-prev.i>1)g.setLineDash([5,4]);g.beginPath();g.moveTo(prev.x,prev.y);g.lineTo(x,y);g.stroke();g.restore()}prev={x,y,i}});
         points.forEach((p,i)=>{if(!hasValue(p,s))return;let x=px(i),y=py(seriesValue(p,s)),hot=hoverNode&&hoverNode.point===p&&hoverNode.series.key===s.key;g.fillStyle='#171c24';g.strokeStyle=s.color;g.lineWidth=hot?2.5:2;g.beginPath();g.arc(x,y,hot?4.5:3.2,0,Math.PI*2);g.fill();g.stroke();chartNodes.push({x,y,point:p,series:s,value:seriesValue(p,s),count:p[s.count]||0})});
