@@ -311,7 +311,8 @@ static esp_err_t handler_data(httpd_req_t *req) {
     int n = snprintf(head, sizeof(head),
                      "{\"window_ms\":%lld,\"stored\":%lu,\"capacity\":%lu,"
                      "\"returned\":%lu,"
-                     "\"active\":{\"end_epoch_ms\":%lld,"
+                     "\"active\":{\"end_epoch_ms\":%lld,\"end_uptime_ms\":%lld,"
+                     "\"time_verified\":%s,\"time_reconciled\":%s,"
                      "\"frame_count\":%u,\"field_mask\":%u,"
                      "\"pm2_5_avg\":%.2f,\"pm2_5_min\":%.2f,\"pm2_5_max\":%.2f,\"pm2_5_count\":%u,"
                      "\"pm10_0_avg\":%.2f,\"pm10_0_min\":%.2f,\"pm10_0_max\":%.2f,\"pm10_0_count\":%u,"
@@ -327,6 +328,9 @@ static esp_err_t handler_data(httpd_req_t *req) {
                      (unsigned long)capacity,
                      (unsigned long)returned,
                      (long long)active.end_epoch_ms,
+                     (long long)active.end_uptime_ms,
+                     active.time_verified ? "true" : "false",
+                     active.time_reconciled ? "true" : "false",
                      active.frame_count,
                      active.field_mask,
                      active.pm2_5.avg, active.pm2_5.min, active.pm2_5.max, active.pm2_5.count,
@@ -360,7 +364,8 @@ static esp_err_t handler_data(httpd_req_t *req) {
 
         char item[1536];
         n = snprintf(item, sizeof(item),
-                     "%s{\"seq\":%lu,\"end_epoch_ms\":%lld,"
+                     "%s{\"seq\":%lu,\"end_epoch_ms\":%lld,\"end_uptime_ms\":%lld,"
+                     "\"time_verified\":%s,\"time_reconciled\":%s,"
                      "\"frame_count\":%u,\"field_mask\":%u,"
                      "\"pm2_5_avg\":%.2f,\"pm2_5_min\":%.2f,\"pm2_5_max\":%.2f,\"pm2_5_count\":%u,"
                      "\"pm10_0_avg\":%.2f,\"pm10_0_min\":%.2f,\"pm10_0_max\":%.2f,\"pm10_0_count\":%u,"
@@ -373,6 +378,9 @@ static esp_err_t handler_data(httpd_req_t *req) {
                      emitted ? "," : "",
                      (unsigned long)record.seq,
                      (long long)record.end_epoch_ms,
+                     (long long)record.end_uptime_ms,
+                     record.time_verified ? "true" : "false",
+                     record.time_reconciled ? "true" : "false",
                      record.frame_count,
                      record.field_mask,
                      record.pm2_5.avg, record.pm2_5.min, record.pm2_5.max, record.pm2_5.count,
@@ -446,7 +454,8 @@ static uint32_t export_start_index(uint32_t stored, uint32_t days) {
 static int format_record_json(char *buf, size_t size, const char *prefix,
                               const data_record_t *record) {
     return snprintf(buf, size,
-                    "%s{\"seq\":%lu,\"end_epoch_ms\":%lld,"
+                    "%s{\"seq\":%lu,\"end_epoch_ms\":%lld,\"end_uptime_ms\":%lld,"
+                    "\"time_verified\":%s,\"time_reconciled\":%s,"
                     "\"frame_count\":%u,\"field_mask\":%u,"
                     "\"pm2_5_avg\":%.2f,\"pm2_5_min\":%.2f,\"pm2_5_max\":%.2f,\"pm2_5_count\":%u,"
                     "\"pm10_0_avg\":%.2f,\"pm10_0_min\":%.2f,\"pm10_0_max\":%.2f,\"pm10_0_count\":%u,"
@@ -459,6 +468,9 @@ static int format_record_json(char *buf, size_t size, const char *prefix,
                     prefix,
                     (unsigned long)record->seq,
                     (long long)record->end_epoch_ms,
+                    (long long)record->end_uptime_ms,
+                    record->time_verified ? "true" : "false",
+                    record->time_reconciled ? "true" : "false",
                     record->frame_count,
                     record->field_mask,
                     record->pm2_5.avg, record->pm2_5.min, record->pm2_5.max, record->pm2_5.count,
@@ -473,7 +485,7 @@ static int format_record_json(char *buf, size_t size, const char *prefix,
 
 static int format_record_csv(char *buf, size_t size, const data_record_t *record) {
     return snprintf(buf, size,
-                    "%lu,%lld,%u,%u,"
+                    "%lu,%lld,%lld,%u,%u,%u,%u,"
                     "%.2f,%.2f,%.2f,%u,"
                     "%.2f,%.2f,%.2f,%u,"
                     "%.2f,%.2f,%.2f,%u,"
@@ -484,6 +496,9 @@ static int format_record_csv(char *buf, size_t size, const data_record_t *record
                     "%.2f,%.2f,%.2f,%u\n",
                     (unsigned long)record->seq,
                     (long long)record->end_epoch_ms,
+                    (long long)record->end_uptime_ms,
+                    record->time_verified ? 1u : 0u,
+                    record->time_reconciled ? 1u : 0u,
                     record->frame_count,
                     record->field_mask,
                     record->pm2_5.avg, record->pm2_5.min, record->pm2_5.max, record->pm2_5.count,
@@ -552,7 +567,7 @@ static esp_err_t handler_export(httpd_req_t *req) {
     } else {
         httpd_resp_set_type(req, "text/csv; charset=utf-8");
         err = httpd_resp_sendstr_chunk(req,
-            "seq,end_epoch_ms,frame_count,field_mask,"
+            "seq,end_epoch_ms,end_uptime_ms,time_verified,time_reconciled,frame_count,field_mask,"
             "pm2_5_avg,pm2_5_min,pm2_5_max,pm2_5_count,"
             "pm10_0_avg,pm10_0_min,pm10_0_max,pm10_0_count,"
             "temperature_avg,temperature_min,temperature_max,temperature_count,"

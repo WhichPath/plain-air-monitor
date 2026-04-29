@@ -25,20 +25,28 @@ static void set_error(int err) {
 static BMP5_INTF_RET_TYPE bmp_i2c_read(uint8_t reg_addr, uint8_t *reg_data,
                                        uint32_t len, void *intf_ptr) {
     uint8_t address = *(uint8_t *)intf_ptr;
-    return i2c_bus_read_reg(address, reg_addr, reg_data, len,
-                            pdMS_TO_TICKS(100)) == ESP_OK
-               ? BMP5_INTF_RET_SUCCESS
-               : BMP5_E_COM_FAIL;
+    esp_err_t err = i2c_bus_read_reg(address, reg_addr, reg_data, len,
+                                     pdMS_TO_TICKS(100));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "I2C read failed addr=0x%02x reg=0x%02x len=%lu: %s",
+                 address, reg_addr, (unsigned long)len, esp_err_to_name(err));
+        return BMP5_E_COM_FAIL;
+    }
+    return BMP5_INTF_RET_SUCCESS;
 }
 
 static BMP5_INTF_RET_TYPE bmp_i2c_write(uint8_t reg_addr,
                                         const uint8_t *reg_data,
                                         uint32_t len, void *intf_ptr) {
     uint8_t address = *(uint8_t *)intf_ptr;
-    return i2c_bus_write_reg(address, reg_addr, reg_data, len,
-                             pdMS_TO_TICKS(100)) == ESP_OK
-               ? BMP5_INTF_RET_SUCCESS
-               : BMP5_E_COM_FAIL;
+    esp_err_t err = i2c_bus_write_reg(address, reg_addr, reg_data, len,
+                                      pdMS_TO_TICKS(100));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "I2C write failed addr=0x%02x reg=0x%02x len=%lu: %s",
+                 address, reg_addr, (unsigned long)len, esp_err_to_name(err));
+        return BMP5_E_COM_FAIL;
+    }
+    return BMP5_INTF_RET_SUCCESS;
 }
 
 static void bmp_delay_us(uint32_t period, void *intf_ptr) {
@@ -54,6 +62,10 @@ static void init_dev(uint8_t address) {
     s_dev.read = bmp_i2c_read;
     s_dev.write = bmp_i2c_write;
     s_dev.delay_us = bmp_delay_us;
+}
+
+static bool chip_id_valid(uint8_t chip_id) {
+    return chip_id == BMP5_CHIP_ID_PRIM || chip_id == BMP5_CHIP_ID_SEC;
 }
 
 static int8_t configure_sensor(void) {
@@ -97,11 +109,46 @@ esp_err_t pm_bmp581_init(void) {
     };
     int8_t rslt = BMP5_E_DEV_NOT_FOUND;
     for (size_t i = 0; i < sizeof(addresses); i++) {
+        uint8_t chip_id = 0;
+        bool has_valid_chip_id = false;
+        esp_err_t probe_err = i2c_bus_probe(addresses[i], pdMS_TO_TICKS(100));
+        if (probe_err != ESP_OK) {
+            ESP_LOGW(TAG, "BMP581 address 0x%02x did not ACK: %s",
+                     addresses[i], esp_err_to_name(probe_err));
+        } else {
+            esp_err_t read_err = i2c_bus_read_reg(addresses[i],
+                                                  BMP5_REG_CHIP_ID, &chip_id,
+                                                  1, pdMS_TO_TICKS(100));
+            if (read_err == ESP_OK) {
+                ESP_LOGI(TAG, "BMP581 address 0x%02x chip-id register=0x%02x",
+                         addresses[i], chip_id);
+                has_valid_chip_id = chip_id_valid(chip_id);
+            } else {
+                ESP_LOGW(TAG, "BMP581 address 0x%02x chip-id read failed: %s",
+                         addresses[i], esp_err_to_name(read_err));
+            }
+        }
         init_dev(addresses[i]);
         rslt = bmp5_init(&s_dev);
+        if (rslt == BMP5_E_POWER_UP && has_valid_chip_id) {
+            uint8_t nvm_status = 0;
+            int8_t status_rslt = bmp5_get_regs(BMP5_REG_STATUS, &nvm_status,
+                                               1, &s_dev);
+            if (status_rslt == BMP5_OK &&
+                (nvm_status & BMP5_INT_NVM_RDY) &&
+                !(nvm_status & BMP5_INT_NVM_ERR)) {
+                s_dev.chip_id = chip_id;
+                rslt = BMP5_OK;
+                ESP_LOGW(TAG,
+                         "BMP581 addr=0x%02x accepted after cleared POR status; nvm_status=0x%02x",
+                         addresses[i], nvm_status);
+            }
+        }
         if (rslt == BMP5_OK) {
             break;
         }
+        ESP_LOGW(TAG, "BMP581 init failed at addr=0x%02x rc=%d",
+                 addresses[i], rslt);
     }
     if (rslt != BMP5_OK) {
         ESP_LOGW(TAG, "BMP581 probe failed rc=%d", rslt);

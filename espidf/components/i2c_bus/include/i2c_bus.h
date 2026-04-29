@@ -24,6 +24,7 @@ esp_err_t i2c_bus_read(uint8_t address, uint8_t *data, size_t len,
                        TickType_t timeout_ticks);
 esp_err_t i2c_bus_write(uint8_t address, const uint8_t *data, size_t len,
                         TickType_t timeout_ticks);
+esp_err_t i2c_bus_probe(uint8_t address, TickType_t timeout_ticks);
 esp_err_t i2c_bus_read_reg(uint8_t address, uint8_t reg, uint8_t *data,
                            size_t len, TickType_t timeout_ticks);
 esp_err_t i2c_bus_write_reg(uint8_t address, uint8_t reg, const uint8_t *data,

@@ -64,6 +64,14 @@ Storage behavior:
 - The `data` partition is an append-only ring. NVS remains for Wi-Fi, MicroLink keys, peer cache, and small configuration.
 - Aggregate records store PM2.5, PM10, SHT45 temperature/humidity, BMP581
   pressure, SCD41 CO2, and SGP41 VOC/NOx avg/min/max/count plus field flags.
+- After wall time is verified by SNTP, aggregate buckets use Unix epoch-aligned
+  10-minute boundaries. Before time is verified, the firmware still closes
+  approximate 10-minute buckets from ESP32 uptime and marks them
+  `time_verified=false`; after time sync, pending unverified records are
+  reconciled back to epoch buckets and marked `time_reconciled=true`.
+- Aggregate `count` values are 5-second unified frames, not raw 1-second sensor
+  reads. A full 10-minute bucket is normally about 120 frames; smaller counts
+  mean startup/reboot, a partial active bucket, sensor warm-up, or missed fields.
 
 The firmware uses a custom 16MB OTA partition table: 256KB NVS, 8KB `otadata`,
 two 4MB OTA app slots, and a 0x7B0000-byte `data` partition. When moving from
@@ -87,6 +95,12 @@ SHT45 wiring defaults:
 - Address: `0x44`
 - Bus speed: `100000`
 
+Shared I2C sensor addresses:
+- SHT45: `0x44`
+- BMP581: `0x47`
+- SCD41: `0x62`
+- SGP41: `0x59`
+
 The web page is static HTML/CSS/JS served by the ESP32. Chart rendering and UI
 updates run in the requesting browser. The ESP32 samples SPS30 and SHT45 data,
 keeps a small in-memory history ring, and returns JSON.
@@ -96,7 +110,12 @@ Current verification:
 - Output binary: `espidf/build/ml_seed.bin`
 - Build warnings are currently limited to unused variables/functions in vendored MicroLink/WireGuard sources.
 - T-Display-S3 flash defaults are set in `espidf/sdkconfig.defaults` as 16MB, QIO, 80MHz, with OPI PSRAM enabled.
-- On the attached ESP32-S3, local Wi-Fi dashboard/API responded on port 80 at `192.168.1.196`.
-- SPS30 readout was verified through `/api/metrics` and `/api/history` with `sensor.state=measuring`, increasing `read_count`, and `error_count=0`.
-- SHT45 support is present in the firmware and exposed through `/api/metrics`,
-  `/api/history`, and `/api/data` when the sensor is detected.
+- On the attached ESP32-S3, local Wi-Fi dashboard/API responded on port 80 at `192.168.1.200`.
+- SPS30, SHT45, BMP581, SCD41, and SGP41 were verified through `/api/metrics`;
+  all five report `measuring` after startup and sensor conditioning completes.
+- `/api/data` exposes flash-backed 10-minute aggregates plus the current active
+  bucket, including `time_verified`, `time_reconciled`, and `end_uptime_ms` for
+  bucket provenance.
+- The mobile dashboard was checked with an iPhone 15 browser viewport after
+  flashing. The pressure card fits `1016.x hPa`, pressure chart ticks render
+  fully, and pressure chart values are displayed in hPa.

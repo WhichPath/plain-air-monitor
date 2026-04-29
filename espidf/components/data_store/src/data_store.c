@@ -16,6 +16,8 @@ static const char *TAG = "data_store";
 #define DATA_RECORD_VERSION 4u
 #define DATA_RECORD_SIZE 256u
 #define DATA_FLASH_SECTOR_SIZE 4096u
+#define DATA_TIME_FLAG_VERIFIED   (1u << 0)
+#define DATA_TIME_FLAG_RECONCILED (1u << 1)
 
 typedef struct {
     float avg;
@@ -42,7 +44,9 @@ typedef struct {
     flash_field_stat_t voc_index;
     flash_field_stat_t nox_index;
     uint32_t crc32;
-    uint8_t reserved[96];
+    uint32_t time_flags;
+    int64_t end_uptime_ms;
+    uint8_t reserved[80];
 } flash_data_record_t;
 
 typedef struct {
@@ -54,7 +58,10 @@ typedef struct {
 
 typedef struct {
     int64_t end_epoch_ms;
+    int64_t end_uptime_ms;
     uint32_t frame_count;
+    bool time_verified;
+    bool time_reconciled;
     field_accumulator_t pm2_5;
     field_accumulator_t pm10_0;
     field_accumulator_t temperature;
@@ -106,8 +113,12 @@ static void flash_to_public_record(const flash_data_record_t *in,
     memset(out, 0, sizeof(*out));
     out->seq = in->seq;
     out->end_epoch_ms = in->end_epoch_ms;
+    out->end_uptime_ms = in->end_uptime_ms;
     out->frame_count = in->frame_count;
     out->field_mask = in->field_mask;
+    out->time_verified = (in->time_flags & DATA_TIME_FLAG_VERIFIED) != 0 ||
+                         (in->time_flags == 0 && in->end_epoch_ms > 0);
+    out->time_reconciled = (in->time_flags & DATA_TIME_FLAG_RECONCILED) != 0;
     public_stat_from_flash(&in->pm2_5, &out->pm2_5);
     public_stat_from_flash(&in->pm10_0, &out->pm10_0);
     public_stat_from_flash(&in->temperature, &out->temperature);
@@ -222,9 +233,28 @@ static int64_t bucket_end_epoch_ms(int64_t epoch_ms) {
            DATA_RECORD_WINDOW_MS;
 }
 
-static void active_reset(int64_t end_epoch_ms) {
+static int64_t bucket_end_uptime_ms(int64_t uptime_ms) {
+    if (uptime_ms <= 0) {
+        return DATA_RECORD_WINDOW_MS;
+    }
+    return (((uptime_ms - 1) / DATA_RECORD_WINDOW_MS) + 1) *
+           DATA_RECORD_WINDOW_MS;
+}
+
+static bool flash_record_time_verified(const flash_data_record_t *record) {
+    return (record->time_flags & DATA_TIME_FLAG_VERIFIED) != 0 ||
+           (record->time_flags == 0 && record->end_epoch_ms > 0);
+}
+
+static void active_reset(int64_t end_epoch_ms,
+                         int64_t end_uptime_ms,
+                         bool time_verified,
+                         bool time_reconciled) {
     memset(&active, 0, sizeof(active));
     active.end_epoch_ms = end_epoch_ms;
+    active.end_uptime_ms = end_uptime_ms;
+    active.time_verified = time_verified;
+    active.time_reconciled = time_reconciled;
 }
 
 static void field_add(field_accumulator_t *acc, float value) {
@@ -309,6 +339,7 @@ static void append_record_locked(void) {
         .size = DATA_RECORD_SIZE,
         .seq = next_seq++,
         .end_epoch_ms = active.end_epoch_ms,
+        .end_uptime_ms = active.end_uptime_ms,
         .frame_count = (active.frame_count > UINT16_MAX)
                            ? UINT16_MAX
                            : (uint16_t)active.frame_count,
@@ -321,6 +352,8 @@ static void append_record_locked(void) {
         .co2 = flash_stat_from_acc(&active.co2),
         .voc_index = flash_stat_from_acc(&active.voc_index),
         .nox_index = flash_stat_from_acc(&active.nox_index),
+        .time_flags = (active.time_verified ? DATA_TIME_FLAG_VERIFIED : 0) |
+                      (active.time_reconciled ? DATA_TIME_FLAG_RECONCILED : 0),
     };
     record.crc32 = record_crc(&record);
 
@@ -340,11 +373,115 @@ static void append_record_locked(void) {
         record_count++;
     }
 
-    ESP_LOGI(TAG, "data saved: seq=%lu end_epoch=%lld frames=%u fields=0x%x",
+    ESP_LOGI(TAG, "data saved: seq=%lu end_epoch=%lld end_uptime=%lld frames=%u fields=0x%x verified=%d",
              (unsigned long)record.seq,
              (long long)record.end_epoch_ms,
+             (long long)record.end_uptime_ms,
              record.frame_count,
-             record.field_mask);
+             record.field_mask,
+             flash_record_time_verified(&record) ? 1 : 0);
+}
+
+static bool append_flash_record_locked(flash_data_record_t *record) {
+    if (!data_partition || !record || record_capacity == 0) {
+        return false;
+    }
+
+    record->seq = next_seq++;
+    record->crc32 = record_crc(record);
+
+    uint32_t slot = write_slot;
+    esp_err_t err = slot_write(slot, record);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "data record rewrite failed at slot %lu: %s",
+                 (unsigned long)slot,
+                 esp_err_to_name(err));
+        return false;
+    }
+
+    write_slot = (write_slot + 1) % record_capacity;
+    if (record_index && record_count < record_capacity) {
+        record_index[record_count].seq = record->seq;
+        record_index[record_count].slot = slot;
+        record_count++;
+    }
+    return true;
+}
+
+static void remove_index_at(uint32_t index) {
+    if (index >= record_count) {
+        return;
+    }
+    for (uint32_t i = index + 1; i < record_count; i++) {
+        record_index[i - 1] = record_index[i];
+    }
+    record_count--;
+}
+
+static bool remove_index_for_slot_exact(uint32_t slot) {
+    for (uint32_t i = 0; i < record_count; i++) {
+        if (record_index[i].slot == slot) {
+            remove_index_at(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+static void invalidate_slot(uint32_t slot) {
+    uint32_t zero = 0;
+    esp_err_t err = esp_partition_write(data_partition,
+                                        slot * DATA_RECORD_SIZE,
+                                        &zero,
+                                        sizeof(zero));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "failed to invalidate old data slot %lu: %s",
+                 (unsigned long)slot,
+                 esp_err_to_name(err));
+    }
+}
+
+static void reconcile_unverified_records_locked(void) {
+    uint32_t converted = 0;
+    for (uint32_t i = 0; i < record_count;) {
+        uint32_t slot = record_index[i].slot;
+        flash_data_record_t record;
+        if (!slot_read(slot, &record) || !record_valid(&record)) {
+            remove_index_at(i);
+            continue;
+        }
+        if (flash_record_time_verified(&record) || record.end_uptime_ms <= 0) {
+            i++;
+            continue;
+        }
+
+        int64_t estimated_epoch_ms = 0;
+        if (!time_service_uptime_to_epoch_ms(record.end_uptime_ms,
+                                             &estimated_epoch_ms)) {
+            break;
+        }
+
+        flash_data_record_t corrected = record;
+        corrected.end_epoch_ms = bucket_end_epoch_ms(estimated_epoch_ms);
+        corrected.time_flags = DATA_TIME_FLAG_VERIFIED |
+                               DATA_TIME_FLAG_RECONCILED;
+        if (!append_flash_record_locked(&corrected)) {
+            break;
+        }
+
+        invalidate_slot(slot);
+        if (!remove_index_for_slot_exact(slot)) {
+            continue;
+        }
+        converted++;
+    }
+
+    if (converted > 0) {
+        qsort(record_index, record_count, sizeof(record_index[0]),
+              record_index_compare);
+        ESP_LOGI(TAG, "reconciled %lu unverified data records after time sync",
+                 (unsigned long)converted);
+    }
 }
 
 static void scan_partition_locked(void) {
@@ -421,7 +558,7 @@ esp_err_t data_store_init(void) {
         return ESP_ERR_TIMEOUT;
     }
     scan_partition_locked();
-    active_reset(0);
+    active_reset(0, 0, false, false);
     xSemaphoreGive(store_mutex);
 
     ESP_LOGI(TAG, "data partition ready: offset=0x%lx size=%lu records=%lu/%lu next_seq=%lu",
@@ -439,25 +576,47 @@ void data_store_add_sample(const sensor_sample_t *sample, void *user_data) {
         return;
     }
 
-    int64_t sample_epoch_ms = 0;
-    if (!time_service_uptime_to_epoch_ms(sample->timestamp_ms,
-                                         &sample_epoch_ms)) {
-        return;
-    }
-
     if (xSemaphoreTake(store_mutex, pdMS_TO_TICKS(200)) != pdTRUE) {
         return;
     }
 
-    int64_t bucket_end = bucket_end_epoch_ms(sample_epoch_ms);
+    int64_t sample_epoch_ms = 0;
+    bool time_verified = time_service_uptime_to_epoch_ms(sample->timestamp_ms,
+                                                        &sample_epoch_ms);
+    if (time_verified) {
+        reconcile_unverified_records_locked();
+        if (active.frame_count > 0 && !active.time_verified &&
+            active.end_uptime_ms > 0) {
+            int64_t active_epoch_ms = 0;
+            if (time_service_uptime_to_epoch_ms(active.end_uptime_ms,
+                                                &active_epoch_ms)) {
+                active.end_epoch_ms = bucket_end_epoch_ms(active_epoch_ms);
+                active.time_verified = true;
+                active.time_reconciled = true;
+            }
+        }
+    }
+
+    int64_t bucket_end = time_verified ? bucket_end_epoch_ms(sample_epoch_ms) : 0;
+    int64_t uptime_bucket_end = bucket_end_uptime_ms(sample->timestamp_ms);
+    bool bucket_changed = false;
     if (active.frame_count == 0) {
-        active_reset(bucket_end);
-    } else if (bucket_end < active.end_epoch_ms) {
+        active_reset(bucket_end, uptime_bucket_end, time_verified, false);
+    } else if (time_verified && active.time_verified &&
+               bucket_end < active.end_epoch_ms) {
         ESP_LOGW(TAG, "time moved backwards, dropping active partial bucket");
-        active_reset(bucket_end);
-    } else if (bucket_end != active.end_epoch_ms) {
+        active_reset(bucket_end, uptime_bucket_end, true, false);
+    } else if (time_verified && active.time_verified) {
+        bucket_changed = bucket_end != active.end_epoch_ms;
+    } else if (!time_verified && !active.time_verified) {
+        bucket_changed = uptime_bucket_end != active.end_uptime_ms;
+    } else if (time_verified != active.time_verified) {
+        bucket_changed = true;
+    }
+
+    if (bucket_changed) {
         append_record_locked();
-        active_reset(bucket_end);
+        active_reset(bucket_end, uptime_bucket_end, time_verified, false);
     }
 
     active.frame_count++;
@@ -512,10 +671,13 @@ void data_store_get_active_locked(data_active_t *out) {
 
     memset(out, 0, sizeof(*out));
     out->end_epoch_ms = active.end_epoch_ms;
+    out->end_uptime_ms = active.end_uptime_ms;
     out->frame_count = (active.frame_count > UINT16_MAX)
                            ? UINT16_MAX
                            : (uint16_t)active.frame_count;
     out->field_mask = field_mask_for_active();
+    out->time_verified = active.time_verified;
+    out->time_reconciled = active.time_reconciled;
     out->pm2_5 = public_stat_from_acc(&active.pm2_5);
     out->pm10_0 = public_stat_from_acc(&active.pm10_0);
     out->temperature = public_stat_from_acc(&active.temperature);

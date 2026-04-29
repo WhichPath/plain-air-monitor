@@ -31,8 +31,11 @@ typedef struct {
 typedef struct {
     uint32_t seq;
     int64_t end_epoch_ms;
+    int64_t end_uptime_ms;
     uint16_t frame_count;
     uint16_t field_mask;
+    bool time_verified;
+    bool time_reconciled;
     data_field_stat_t pm2_5;
     data_field_stat_t pm10_0;
     data_field_stat_t temperature;
@@ -45,8 +48,11 @@ typedef struct {
 
 typedef struct {
     int64_t end_epoch_ms;
+    int64_t end_uptime_ms;
     uint16_t frame_count;
     uint16_t field_mask;
+    bool time_verified;
+    bool time_reconciled;
     data_field_stat_t pm2_5;
     data_field_stat_t pm10_0;
     data_field_stat_t temperature;

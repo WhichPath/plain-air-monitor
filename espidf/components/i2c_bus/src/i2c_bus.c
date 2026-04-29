@@ -137,6 +137,19 @@ esp_err_t i2c_bus_write(uint8_t address, const uint8_t *data, size_t len,
     return err;
 }
 
+esp_err_t i2c_bus_probe(uint8_t address, TickType_t timeout_ticks) {
+    esp_err_t err = i2c_bus_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (!i2c_bus_lock(timeout_ticks)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    err = i2c_master_probe(bus_handle, address, timeout_to_ms(timeout_ticks));
+    i2c_bus_unlock();
+    return err;
+}
+
 esp_err_t i2c_bus_read_reg(uint8_t address, uint8_t reg, uint8_t *data,
                            size_t len, TickType_t timeout_ticks) {
     esp_err_t err = i2c_bus_init();

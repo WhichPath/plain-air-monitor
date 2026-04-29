@@ -10,11 +10,11 @@
     header{height:58px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line);background:#111720;position:relative;z-index:5}
     h1{font-size:18px;margin:0;font-weight:650}sub{font-size:.68em;line-height:0}.actions{display:flex;align-items:center;gap:7px}.control{position:relative}.pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:5px 9px;color:var(--muted);white-space:nowrap;background:transparent;font:13px system-ui;line-height:1.35}.action-pill{cursor:pointer}.action-pill:hover,.control.open>.action-pill{border-color:var(--blue);color:var(--text);background:#14324d}.dot{width:8px;height:8px;border-radius:50%;background:var(--warn)}.dot.ok{background:var(--good)}.dot.bad{background:var(--bad)}
     main{height:calc(100dvh - 58px);max-width:1120px;margin:0 auto;padding:10px;display:grid;grid-template-rows:auto minmax(260px,1fr);gap:10px}
-    .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.card{min-width:0;appearance:none;text-align:left;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;cursor:pointer}.card:hover,.card.active{background:var(--panel2);border-color:var(--blue)}.card.active{box-shadow:inset 0 0 0 1px rgba(94,177,255,.45)}.card.wide{grid-column:span 2}.card.compact{grid-column:span 1}.card h2,.metric-title{font-size:12px;margin:0 0 8px;color:#c9d2dc;font-weight:650}.metric-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.metric-row.single{grid-template-columns:1fr}.label{color:var(--muted);font-size:10px}.value{font-size:22px;font-weight:720;margin-top:2px;white-space:nowrap}.unit{font-size:10px;color:var(--muted);margin-left:2px;font-weight:500}.compact .value{font-size:20px}
+    .cards{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:8px}.card{min-width:0;appearance:none;text-align:left;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;cursor:pointer}.card:hover,.card.active{background:var(--panel2);border-color:var(--blue)}.card.active{box-shadow:inset 0 0 0 1px rgba(94,177,255,.45)}.card.wide{grid-column:span 5}.card.climate{grid-column:span 4}.card.pressure,.card.co2{grid-column:span 3}.card h2,.metric-title{font-size:12px;margin:0 0 8px;color:#c9d2dc;font-weight:650}.metric-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.metric-row.single{grid-template-columns:1fr}.label{color:var(--muted);font-size:10px}.value{font-size:22px;font-weight:720;margin-top:2px;white-space:nowrap}.unit{font-size:10px;color:var(--muted);margin-left:2px;font-weight:500}.compact .value{font-size:20px}
     .panel{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}.stage{min-height:0;display:grid}.status{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;align-content:start}.status span,.sensor-meta span,.popover span{display:block;color:var(--muted);font-size:10px}.status b,.sensor-meta b,.popover b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;margin-top:2px}.popover{display:none;position:absolute;right:0;top:36px;width:280px;padding:10px;border:1px solid var(--line);border-radius:8px;background:#111720;box-shadow:0 12px 30px rgba(0,0,0,.36);z-index:10}.control.open .popover{display:block}.export,.ota{display:grid;align-items:end;gap:8px}.export{grid-template-columns:86px 1fr auto}.export label,.ota label{display:grid;gap:3px;color:var(--muted);font-size:10px;min-width:0}.export select,.export input,.ota input{height:30px;min-width:0;border:1px solid var(--line);border-radius:6px;background:#171c24;color:var(--text);padding:0 7px;font:12px system-ui}.export input{width:100%}.export button,.ota button{height:30px;border:1px solid var(--blue);border-radius:6px;background:#14324d;color:var(--text);padding:0 10px;font:12px system-ui;cursor:pointer;white-space:nowrap}.export button:active,.ota button:active{transform:translateY(1px)}.export button:disabled,.ota button:disabled{opacity:.55;cursor:default}.ota{grid-template-columns:1fr auto;row-gap:8px}.ota input{width:100%}.ota div{grid-column:1/-1}
     .detail{display:none;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:0}.stage.expanded .status{display:none}.stage.expanded .detail{display:grid}.chart{min-height:0;position:relative}.chart canvas{width:100%;height:100%;display:block;touch-action:manipulation}.tip{position:absolute;display:none;min-width:140px;max-width:210px;padding:7px 8px;border:1px solid var(--line);border-radius:7px;background:#111720;color:var(--text);box-shadow:0 8px 24px rgba(0,0,0,.28);font-size:11px;line-height:1.35;pointer-events:none;z-index:2}.tip b{display:block;margin-bottom:3px;font-size:11px}.tip span{display:block;color:var(--muted)}
     .sensor-meta{display:grid;align-content:start;gap:9px}.logo-wrap{height:30px;display:flex;align-items:center;justify-content:flex-start}.brand-logo{display:block;height:22px;width:auto;max-width:210px;object-fit:contain}.meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.accuracy{min-width:0}.note{color:var(--muted);font-size:11px;line-height:1.45}
-    @media(max-width:760px){body{overflow:auto}header{gap:8px}h1{font-size:17px}.actions{gap:5px}.pill{padding:5px 8px;font-size:12px}.popover{position:fixed;top:50px;right:10px;left:10px;width:auto}.cards{grid-template-columns:repeat(4,minmax(0,1fr))}.card{padding:9px}.card.wide{grid-column:span 2}.card.compact{grid-column:span 1}.metric-row{gap:5px}.value{font-size:19px}.compact .value{font-size:17px}main{height:auto;min-height:0;grid-template-rows:auto auto;align-content:start}.stage.expanded{min-height:0}.status{grid-template-columns:repeat(2,minmax(0,1fr))}.detail{grid-template-columns:1fr;grid-template-rows:250px auto}.sensor-meta{gap:7px}.meta-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.note{line-height:1.35}}
+    @media(max-width:760px){body{overflow:auto}header{gap:8px}h1{font-size:17px}.actions{gap:5px}.pill{padding:5px 8px;font-size:12px}.popover{position:fixed;top:50px;right:10px;left:10px;width:auto}.cards{grid-template-columns:repeat(24,minmax(0,1fr))}.card{padding:9px}.card.wide{grid-column:span 12}.card.climate{grid-column:span 11}.card.pressure{grid-column:span 7}.card.co2{grid-column:span 6}.metric-row{gap:5px}.value{font-size:19px}.compact .value{font-size:17px}main{height:auto;min-height:0;grid-template-rows:auto auto;align-content:start}.stage.expanded{min-height:0}.status{grid-template-columns:repeat(2,minmax(0,1fr))}.detail{grid-template-columns:1fr;grid-template-rows:var(--chart-h,220px) auto}.sensor-meta{gap:7px}.meta-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.note{line-height:1.35}}
     @media(max-width:370px){main{padding:8px}.card,.panel{padding:8px}.value{font-size:17px}.compact .value{font-size:15px}.unit{font-size:9px}}
   </style>
 </head>
@@ -59,18 +59,18 @@
           <div><div class="label">NOx Index</div><div class="value"><span id="nox">--</span></div></div>
         </div>
       </button>
-      <button class="card wide" data-panel="climate" type="button">
+      <button class="card climate" data-panel="climate" type="button">
         <div class="metric-row">
           <div><div class="metric-title">温度</div><div class="value"><span id="temp">--</span><span class="unit">C</span></div></div>
           <div><div class="metric-title">湿度</div><div class="value"><span id="hum">--</span><span class="unit">%RH</span></div></div>
         </div>
       </button>
-      <button class="card compact" data-panel="pressure" type="button">
+      <button class="card compact pressure" data-panel="pressure" type="button">
         <h2>大气压强</h2><div class="metric-row single">
           <div><div class="value"><span id="pressure">--</span><span class="unit">hPa</span></div></div>
         </div>
       </button>
-      <button class="card compact" data-panel="co2" type="button">
+      <button class="card compact co2" data-panel="co2" type="button">
         <h2>CO<sub>2</sub> 浓度</h2><div class="metric-row single">
           <div><div class="value"><span id="co2">--</span><span class="unit">ppm</span></div></div>
         </div>
@@ -107,7 +107,7 @@
       particle:{title:'颗粒物',state:'sensor',maker:'Sensirion',model:'SPS30',bus:'UART 115200',sample:'1 s',accuracy:'PM2.5 +/-10 ug/m3 或 +/-10%',note:'激光散射颗粒物传感器，长期记录保存 PM2.5 和 PM10 的 10 分钟聚合值。',series:[[{key:'pm2_5_avg',count:'pm2_5_count',field:FIELD.pm25,color:'#5eb1ff',name:'PM2.5',unit:'ug/m3',digits:2},{key:'pm10_0_avg',count:'pm10_0_count',field:FIELD.pm10,color:'#ff7a7a',name:'PM10',unit:'ug/m3',digits:2}]]},
       gas:{title:'气体指数',state:'sgp41',maker:'Sensirion',model:'SGP41',bus:'I2C 0x59',sample:'1 s',accuracy:'VOC/NOx 趋势指数',note:'输出是 Sensirion 气体指数，不是 ppm/ppb 绝对浓度；固件使用 SHT45 温湿度进行补偿。',series:[[{key:'voc_index_avg',count:'voc_index_count',field:FIELD.voc,color:'#5eb1ff',name:'VOC Index',unit:'idx',digits:0}],[{key:'nox_index_avg',count:'nox_index_count',field:FIELD.nox,color:'#39d98a',name:'NOx Index',unit:'idx',digits:0}]]},
       climate:{title:'温湿度',state:'sht45',maker:'Sensirion',model:'SHT45',bus:'I2C 0x44',sample:'1 s',accuracy:'温度 +/-0.1 C；湿度 +/-1 %RH',note:'系统主温湿度来源，同时用于 SGP41 气体指数补偿。',series:[[{key:'temperature_avg',count:'temperature_count',field:FIELD.temp,color:'#ffce56',name:'温度',unit:'C',digits:1}],[{key:'humidity_avg',count:'humidity_count',field:FIELD.hum,color:'#39d98a',name:'湿度',unit:'%RH',digits:1}]]},
-      pressure:{title:'大气压强',state:'bmp581',maker:'Bosch Sensortec',model:'BMP581',bus:'I2C 0x46/0x47',sample:'5 s',accuracy:'相对精度约 +/-0.06 hPa',note:'大气压强用于用户展示，并可用于 SCD41 环境压力补偿；内部温度只作为诊断来源。',series:[[{key:'pressure_avg',count:'pressure_count',field:FIELD.pressure,color:'#55d6e8',name:'大气压强',unit:'Pa',digits:0}]]},
+      pressure:{title:'大气压强',state:'bmp581',maker:'Bosch Sensortec',model:'BMP581',bus:'I2C 0x47',sample:'5 s',accuracy:'相对精度约 +/-0.06 hPa',note:'大气压强用于用户展示，并可用于 SCD41 环境压力补偿；内部温度只作为诊断来源。',series:[[{key:'pressure_avg',count:'pressure_count',field:FIELD.pressure,color:'#55d6e8',name:'大气压强',unit:'hPa',digits:1,scale:.01}]]},
       co2:{title:'CO₂ 浓度',state:'scd41',maker:'Sensirion',model:'SCD41',bus:'I2C 0x62',sample:'5 s',accuracy:'+/-40 ppm + 5%',note:'NDIR CO₂ 传感器；内部温湿度用于自身补偿，不替代 SHT45 的环境温湿度。',series:[[{key:'co2_avg',count:'co2_count',field:FIELD.co2,color:'#ff7a7a',name:'CO₂ 浓度',unit:'ppm',digits:0}]]}
     };
     let records=[],active=null,chartNodes=[],hoverNode=null,currentPanel=null,lastMetrics=null;
@@ -141,45 +141,59 @@
     function ago(epoch){if(!epoch)return'时间未同步';let h=Math.max(0,(Date.now()-epoch)/3600000);return h<1?Math.round(h*60)+'分钟前':h<24?Math.round(h)+'小时前':Math.round(h/24)+'天前'}
     function niceStep(range){let raw=range/3,p=Math.pow(10,Math.floor(Math.log10(raw||1))),n=raw/p;return (n<=1?1:n<=2?2:n<=5?5:10)*p}
     function yBounds(vals){let min=Math.min(...vals),max=Math.max(...vals),range=max-min;if(!Number.isFinite(range))return{min:0,max:10,step:5};let pad=Math.max(range*.25,range<2?.5:1),lo=min-pad,hi=max+pad,step=niceStep(hi-lo);lo=Math.floor(lo/step)*step;hi=Math.ceil(hi/step)*step;if(lo<0&&min>=0)lo=0;if(hi<=lo)hi=lo+step*3;return{min:lo,max:hi,step}}
+    function axisLabel(v,step){return Math.abs(step)<1?v.toFixed(1):(Math.abs(v)>=10?String(Math.round(v)):v.toFixed(1))}
     function hasValue(p,s){return p&&Number.isFinite(p[s.key])&&(!s.field||(p.field_mask&s.field))}
+    function seriesValue(p,s){return p[s.key]*(s.scale||1)}
     function detailPoints(){
       const bucket=600000,latest=active&&active.end_epoch_ms?active.end_epoch_ms:records.length?records[records.length-1].end_epoch_ms:Math.floor(Date.now()/bucket)*bucket,start=latest-23*bucket;
       const source=active?records.concat([active]):records,byBucket=new Map(source.filter(p=>p.end_epoch_ms>0).map(p=>[p.end_epoch_ms,p]));
       return Array.from({length:24},(_,i)=>byBucket.get(start+i*bucket)||null);
     }
-    function drawBand(g,band,points,series,title){
-      g.save();g.beginPath();g.rect(band.x-42,band.y,band.w+42,band.h);g.clip();
-      let vals=points.flatMap(p=>series.map(s=>hasValue(p,s)?p[s.key]:NaN)).filter(Number.isFinite);
-      g.strokeStyle='#2a313d';g.lineWidth=1;g.strokeRect(band.x,band.y,band.w,band.h);
-      g.fillStyle='#c9d2dc';g.font='11px system-ui';g.textAlign='left';g.fillText(title,band.x,band.y+12);
-      series.forEach((s,i)=>{let x=band.x+72+i*96,y=band.y+12;g.strokeStyle=s.color;g.lineWidth=2;g.beginPath();g.moveTo(x,y-4);g.lineTo(x+14,y-4);g.stroke();g.fillStyle='#9aa6b2';g.fillText(s.name,x+18,y)});
+    function fitChartHeight(){
+      const detail=document.querySelector('.detail'),meta=document.querySelector('.sensor-meta');
+      if(!detail||!meta)return;
+      if(!currentPanel||innerWidth>760){detail.style.removeProperty('--chart-h');return}
+      const main=document.querySelector('main'),cards=document.querySelector('.cards'),header=document.querySelector('header');
+      const mainStyle=getComputedStyle(main),stageStyle=getComputedStyle($('stage')),detailStyle=getComputedStyle(detail);
+      const px=v=>{const n=parseFloat(v);return Number.isFinite(n)?n:0};
+      const reserved=header.offsetHeight+cards.offsetHeight+px(mainStyle.paddingTop)+px(mainStyle.paddingBottom)+px(mainStyle.rowGap||mainStyle.gap)+px(stageStyle.paddingTop)+px(stageStyle.paddingBottom)+px(detailStyle.rowGap||detailStyle.gap)+meta.offsetHeight+2;
+      const minH=(SENSORS[currentPanel].series.length>1)?180:140;
+      detail.style.setProperty('--chart-h',Math.max(minH,Math.floor(innerHeight-reserved))+'px');
+    }
+    function drawBand(g,band,points,series){
+      g.save();g.beginPath();g.rect(band.x-50,band.y,band.w+62,band.h);g.clip();
+      let vals=points.flatMap(p=>series.map(s=>hasValue(p,s)?seriesValue(p,s):NaN)).filter(Number.isFinite);
+      g.font='11px system-ui';g.textAlign='left';
+      series.forEach((s,i)=>{let x=band.x+i*96,y=band.y+12;g.strokeStyle=s.color;g.lineWidth=2;g.beginPath();g.moveTo(x,y-4);g.lineTo(x+14,y-4);g.stroke();g.fillStyle='#9aa6b2';g.fillText(s.name,x+18,y)});
       if(!vals.length){g.fillStyle='#9aa6b2';g.textAlign='center';g.fillText('数据收集中',band.x+band.w/2,band.y+band.h/2);g.restore();return}
       let b=yBounds(vals),plotTop=band.y+20,plotH=band.h-28,px=i=>band.x+i*band.w/23,py=v=>plotTop+plotH-((v-b.min)/(b.max-b.min))*plotH;
       g.fillStyle='#9aa6b2';g.textAlign='right';
-      for(let v=b.min,i=0;v<=b.max+Math.abs(b.step*.01)&&i<6;v+=b.step,i++){let y=py(v);g.fillText(Math.abs(v)>=10?String(Math.round(v)):v.toFixed(1),band.x-7,y+4)}
+      for(let v=b.min,i=0;v<=b.max+Math.abs(b.step*.01)&&i<6;v+=b.step,i++){let y=py(v);g.fillStyle='#9aa6b2';g.fillText(axisLabel(v,b.step),band.x-7,y+4);g.save();g.strokeStyle='#2a313d';g.setLineDash([3,5]);g.beginPath();g.moveTo(band.x,y);g.lineTo(band.x+band.w,y);g.stroke();g.restore()}
       series.forEach(s=>{
         let prev=null;
-        points.forEach((p,i)=>{if(!hasValue(p,s))return;let x=px(i),y=py(p[s.key]);if(prev){g.save();g.strokeStyle=s.color;g.lineWidth=2;if(i-prev.i>1)g.setLineDash([5,4]);g.beginPath();g.moveTo(prev.x,prev.y);g.lineTo(x,y);g.stroke();g.restore()}prev={x,y,i}});
-        points.forEach((p,i)=>{if(!hasValue(p,s))return;let x=px(i),y=py(p[s.key]),hot=hoverNode&&hoverNode.point===p&&hoverNode.series.key===s.key;g.fillStyle='#171c24';g.strokeStyle=s.color;g.lineWidth=hot?2.5:2;g.beginPath();g.arc(x,y,hot?4.5:3.2,0,Math.PI*2);g.fill();g.stroke();chartNodes.push({x,y,point:p,series:s,value:p[s.key],count:p[s.count]||0})});
+        points.forEach((p,i)=>{if(!hasValue(p,s))return;let x=px(i),y=py(seriesValue(p,s));if(prev){g.save();g.strokeStyle=s.color;g.lineWidth=2;if(i-prev.i>1)g.setLineDash([5,4]);g.beginPath();g.moveTo(prev.x,prev.y);g.lineTo(x,y);g.stroke();g.restore()}prev={x,y,i}});
+        points.forEach((p,i)=>{if(!hasValue(p,s))return;let x=px(i),y=py(seriesValue(p,s)),hot=hoverNode&&hoverNode.point===p&&hoverNode.series.key===s.key;g.fillStyle='#171c24';g.strokeStyle=s.color;g.lineWidth=hot?2.5:2;g.beginPath();g.arc(x,y,hot?4.5:3.2,0,Math.PI*2);g.fill();g.stroke();chartNodes.push({x,y,point:p,series:s,value:seriesValue(p,s),count:p[s.count]||0})});
       });g.restore();
     }
     function draw(){
       const c=$('chart'),tip=$('tip'),def=currentPanel&&SENSORS[currentPanel];if(!def||!c)return;
+      fitChartHeight();
       const r=c.getBoundingClientRect(),d=window.devicePixelRatio||1;c.width=Math.max(1,r.width*d);c.height=Math.max(1,r.height*d);
       const g=c.getContext('2d');g.scale(d,d);g.clearRect(0,0,r.width,r.height);chartNodes=[];tip.style.display='none';
-      const pad={l:r.width<520?36:42,t:14,r:12,b:30},w=Math.max(1,r.width-pad.l-pad.r),h=Math.max(1,r.height-pad.t-pad.b),points=detailPoints();
+      const pad={l:r.width<520?50:54,t:14,r:r.width<520?20:16,b:30},w=Math.max(1,r.width-pad.l-pad.r),h=Math.max(1,r.height-pad.t-pad.b),points=detailPoints();
       const gap=8,rows=def.series.length,bandH=(h-gap*(rows-1))/rows;
-      def.series.forEach((series,i)=>drawBand(g,{x:pad.l,y:pad.t+i*(bandH+gap),w,h:bandH},points,series,rows===1?def.title:series[0].name));
+      def.series.forEach((series,i)=>drawBand(g,{x:pad.l,y:pad.t+i*(bandH+gap),w,h:bandH},points,series));
       const axisY=pad.t+h,ticks=[['4小时前',0],['2小时前',.5],['现在',1]];
       ticks.forEach(([label,t])=>{let x=pad.l+w*t;g.fillStyle='#9aa6b2';g.textAlign=t===1?'right':t===0?'left':'center';g.fillText(label,x,r.height-10);g.strokeStyle='#2a313d';g.beginPath();g.moveTo(x,axisY);g.lineTo(x,axisY+4);g.stroke()});
       if(hoverNode&&!chartNodes.some(n=>n.point===hoverNode.point&&n.series.key===hoverNode.series.key))hoverNode=null;if(hoverNode)showTip(hoverNode);
     }
     function nearestNode(ev){const r=$('chart').getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;let best=null,dist=18*18;chartNodes.forEach(n=>{let dx=n.x-x,dy=n.y-y,d=dx*dx+dy*dy;if(d<dist){dist=d;best=n}});return best}
-    function showTip(n){const c=$('chart'),tip=$('tip'),box=c.parentElement.getBoundingClientRect(),s=n.series;tip.innerHTML='<b>'+s.name+' '+fmt(n.value,s.digits)+' '+s.unit+'</b><span>'+ago(n.point.end_epoch_ms||0)+'</span><span>样本 '+n.count+' 个 / 帧 '+(n.point.frame_count||0)+'</span>';tip.style.display='block';let left=c.offsetLeft+n.x+12,top=c.offsetTop+n.y-10;tip.style.left=Math.min(Math.max(8,left),box.width-tip.offsetWidth-8)+'px';tip.style.top=Math.min(Math.max(8,top),box.height-tip.offsetHeight-8)+'px'}
+    function showTip(n){const c=$('chart'),tip=$('tip'),box=c.parentElement.getBoundingClientRect(),s=n.series;tip.innerHTML='<b>'+s.name+' '+fmt(n.value,s.digits)+' '+s.unit+'</b><span>'+ago(n.point.end_epoch_ms||0)+'</span><span>样本 '+n.count+' 个</span>';tip.style.display='block';let left=c.offsetLeft+n.x+12,top=c.offsetTop+n.y-10;tip.style.left=Math.min(Math.max(8,left),box.width-tip.offsetWidth-8)+'px';tip.style.top=Math.min(Math.max(8,top),box.height-tip.offsetHeight-8)+'px'}
     function chartPointer(ev){let n=nearestNode(ev);if(n!==hoverNode){hoverNode=n;draw()}}
     function drawLogo(name){
-      const img=$('sensor_logo'),bosch=name.indexOf('Bosch')>=0;
-      img.src=bosch?'/assets/bosch_logo.svg':'/assets/sensirion_logo.png';
+      const img=$('sensor_logo'),bosch=name.indexOf('Bosch')>=0,next=bosch?'/assets/bosch_logo.svg':'/assets/sensirion_logo.png';
+      img.onload=()=>{fitChartHeight();draw()};
+      if(img.getAttribute('src')!==next)img.src=next;else fitChartHeight();
       img.alt=bosch?'Bosch Sensortec':'Sensirion';
     }
     function updateMeta(){
@@ -190,7 +204,7 @@
       currentPanel=currentPanel===name?null:name;
       document.querySelectorAll('.card').forEach(el=>el.classList.toggle('active',el.dataset.panel===currentPanel));
       $('stage').classList.toggle('expanded',!!currentPanel);
-      hoverNode=null;updateMeta();setTimeout(draw,0);
+      hoverNode=null;updateMeta();setTimeout(()=>{fitChartHeight();draw()},0);
     }
     function closePopovers(){
       document.querySelectorAll('.control.open').forEach(el=>el.classList.remove('open'));
@@ -207,7 +221,7 @@
     document.querySelectorAll('.card').forEach(el=>el.addEventListener('click',()=>selectPanel(el.dataset.panel)));
     $('export_form').addEventListener('submit',ev=>{ev.preventDefault();const f=$('export_format').value==='json'?'json':'csv',d=parseInt($('export_days').value,10);let url='/api/export?format='+encodeURIComponent(f);if(Number.isFinite(d)&&d>0)url+='&days='+encodeURIComponent(d);location.href=url});
     $('ota_form').addEventListener('submit',ev=>{ev.preventDefault();const file=$('ota_file').files[0],btn=$('ota_button'),st=$('ota_status');if(!file){st.textContent='未选择';return}btn.disabled=true;st.textContent='0%';const x=new XMLHttpRequest();x.open('POST','/api/ota');x.setRequestHeader('Content-Type','application/octet-stream');x.upload.onprogress=e=>{if(e.lengthComputable)st.textContent=Math.round(e.loaded*100/e.total)+'%'};x.onload=()=>{btn.disabled=false;st.textContent=x.status===200?'校验通过，重启中':'失败 '+x.status};x.onerror=()=>{btn.disabled=false;st.textContent='上传失败'};x.send(file)});
-    setInterval(pollRealtime,2000);setInterval(loadData,60000);addEventListener('resize',draw);pollRealtime();loadData();
+    setInterval(pollRealtime,2000);setInterval(loadData,60000);addEventListener('resize',()=>{fitChartHeight();draw()});pollRealtime();loadData();
   </script>
 </body>
 </html>

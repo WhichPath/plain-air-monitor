@@ -15,9 +15,9 @@ air-quality node. It is a planning document, not a purchase lock.
 
 | Item | Status | Interface | Primary Data | Notes |
 | --- | --- | --- | --- | --- |
-| Bosch BMP581 pressure sensor module | Firmware support added | I2C/Qwiic, 3.3V | Barometric pressure, derived altitude | Preferred pressure choice for indoor/mobile use. It also reports on-chip temperature with about +/-0.5 K absolute accuracy, but this should not replace SHT45 ambient temperature. Use SHT45 as the single system temperature source. |
-| Sensirion SCD41 CO2 sensor module | Firmware support added | I2C/Qwiic, 3.3V | CO2 ppm | SCD41 also reports internal temperature/humidity for its own compensation. Do not expose those as primary temperature/humidity unless needed for diagnostics. If a Qwiic SCD43 module becomes readily available, SCD43 can be considered as a higher-accuracy CO2 alternative. |
-| Sensirion SGP41 VOC/NOx sensor module | Firmware support added | I2C/Qwiic/STEMMA QT, 3.3V | VOC Index, NOx Index | Output is index/trend data, not absolute ppm/ppb. Feed SHT45 temperature and humidity into the gas index compensation path. |
+| Bosch BMP581 pressure sensor module | Confirmed, address verified | I2C/Qwiic, 3.3V | Barometric pressure, derived altitude | Verified I2C address 0x47. Preferred pressure choice for indoor/mobile use. It also reports on-chip temperature with about +/-0.5 K absolute accuracy, but this should not replace SHT45 ambient temperature. Use SHT45 as the single system temperature source. |
+| Sensirion SCD41 CO2 sensor module | Confirmed, address verified | I2C/Qwiic, 3.3V | CO2 ppm | Verified I2C address 0x62. SCD41 also reports internal temperature/humidity for its own compensation. Do not expose those as primary temperature/humidity unless needed for diagnostics. If a Qwiic SCD43 module becomes readily available, SCD43 can be considered as a higher-accuracy CO2 alternative. |
+| Sensirion SGP41 VOC/NOx sensor module | Confirmed, address verified | I2C/Qwiic/STEMMA QT, 3.3V | VOC Index, NOx Index | Verified I2C address 0x59. Output is index/trend data, not absolute ppm/ppb. Feed SHT45 temperature and humidity into the gas index compensation path. |
 
 ## Wiring Plan
 
@@ -31,12 +31,12 @@ air-quality node. It is a planning document, not a purchase lock.
   board. Further modules can be daisy-chained from the second connector on each
   breakout if available.
 
-Expected I2C addresses:
+Verified I2C addresses:
 
 | Device | Address |
 | --- | --- |
 | SHT45 | 0x44 |
-| BMP581 | module-dependent, commonly 0x46 or 0x47 |
+| BMP581 | 0x47 |
 | SCD41 | 0x62 |
 | SGP41 | 0x59 |
 
@@ -84,7 +84,12 @@ No address conflict is expected with this set.
   into that frame.
 - Flash stores aligned 10-minute aggregates. Long-term records include PM2.5,
   PM10, temperature, humidity, pressure, CO2, VOC Index, and NOx Index, with
-  avg/min/max/count per field. PM1 and PM4 are not persisted long-term.
+  avg/min/max/count per field. Counts are 5-second unified frames; a full
+  10-minute bucket is normally about 120 frames. PM1 and PM4 are not persisted
+  long-term.
+- If SNTP time is unavailable, aggregate buckets are temporarily aligned to
+  ESP32 uptime and marked unverified. After time sync, pending unverified records
+  are reconciled back to epoch-aligned 10-minute buckets.
 - SHT45 temperature/humidity feeds SGP41 compensation. BMP581 pressure feeds SCD41
   ambient pressure compensation when available.
 
