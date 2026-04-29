@@ -18,6 +18,7 @@ static const char *TAG = "sensor_service";
 
 #define SENSOR_RETRY_INTERVAL_TICKS 5
 #define SPS30_REINIT_FAILURES 10
+#define I2C_SENSOR_REINIT_FAILURES 3
 #define FRAME_TICKS (SENSOR_FRAME_INTERVAL_MS / SENSOR_RAW_SAMPLE_INTERVAL_MS)
 
 typedef struct {
@@ -66,6 +67,10 @@ static int bmp581_retry_countdown;
 static int scd41_retry_countdown;
 static int sgp41_retry_countdown;
 static int sps30_consecutive_failures;
+static int sht45_consecutive_failures;
+static int bmp581_consecutive_failures;
+static int scd41_consecutive_failures;
+static int sgp41_consecutive_failures;
 static float latest_temperature_c;
 static float latest_humidity_percent;
 static bool has_latest_sht45;
@@ -146,8 +151,25 @@ static void retry_init(bool *ready, int *countdown, esp_err_t (*init_fn)(void),
     *ready = (init_fn() == ESP_OK);
     if (!*ready) {
         *countdown = SENSOR_RETRY_INTERVAL_TICKS;
-        ESP_LOGW(TAG, "%s not available; retrying later", name);
+        ESP_LOGD(TAG, "%s not available; retrying later", name);
     }
+}
+
+static bool handle_read_failure(const char *name, bool *ready, int *countdown,
+                                int *failures) {
+    read_failures++;
+    (*failures)++;
+    if (*failures < I2C_SENSOR_REINIT_FAILURES) {
+        ESP_LOGD(TAG, "%s read failed (%d/%d)", name, *failures,
+                 I2C_SENSOR_REINIT_FAILURES);
+        return false;
+    }
+
+    ESP_LOGW(TAG, "%s read failed %d times, reinitializing", name, *failures);
+    *ready = false;
+    *countdown = 0;
+    *failures = 0;
+    return true;
 }
 
 static void read_sps30(void) {
@@ -192,12 +214,14 @@ static void read_sht45(void) {
 
     pm_sht45_sample_t sample;
     if (pm_sht45_read(&sample) != ESP_OK) {
-        sht45_ready = false;
-        sht45_retry_countdown = SENSOR_RETRY_INTERVAL_TICKS;
-        has_latest_sht45 = false;
+        if (handle_read_failure("SHT45", &sht45_ready, &sht45_retry_countdown,
+                                &sht45_consecutive_failures)) {
+            has_latest_sht45 = false;
+        }
         return;
     }
 
+    sht45_consecutive_failures = 0;
     latest_temperature_c = sample.temperature_c;
     latest_humidity_percent = sample.humidity_percent;
     has_latest_sht45 = true;
@@ -214,11 +238,12 @@ static void read_sgp41(void) {
     pm_sgp41_sample_t sample;
     if (pm_sgp41_read(latest_temperature_c, latest_humidity_percent,
                       has_latest_sht45, &sample) != ESP_OK) {
-        sgp41_ready = false;
-        sgp41_retry_countdown = SENSOR_RETRY_INTERVAL_TICKS;
+        handle_read_failure("SGP41", &sgp41_ready, &sgp41_retry_countdown,
+                            &sgp41_consecutive_failures);
         return;
     }
 
+    sgp41_consecutive_failures = 0;
     scalar_add(&frame_acc.voc_index, (float)sample.voc_index);
     if (sample.has_nox) {
         scalar_add(&frame_acc.nox_index, (float)sample.nox_index);
@@ -234,12 +259,15 @@ static void read_bmp581(void) {
 
     pm_bmp581_sample_t sample;
     if (pm_bmp581_read(&sample) != ESP_OK) {
-        bmp581_ready = false;
-        bmp581_retry_countdown = SENSOR_RETRY_INTERVAL_TICKS;
-        has_latest_pressure = false;
+        if (handle_read_failure("BMP581", &bmp581_ready,
+                                &bmp581_retry_countdown,
+                                &bmp581_consecutive_failures)) {
+            has_latest_pressure = false;
+        }
         return;
     }
 
+    bmp581_consecutive_failures = 0;
     latest_pressure_pa = sample.pressure_pa;
     has_latest_pressure = true;
     scalar_add(&frame_acc.pressure_pa, sample.pressure_pa);
@@ -258,11 +286,12 @@ static void read_scd41(void) {
         return;
     }
     if (err != ESP_OK) {
-        scd41_ready = false;
-        scd41_retry_countdown = SENSOR_RETRY_INTERVAL_TICKS;
+        handle_read_failure("SCD41", &scd41_ready, &scd41_retry_countdown,
+                            &scd41_consecutive_failures);
         return;
     }
 
+    scd41_consecutive_failures = 0;
     scalar_add(&frame_acc.co2_ppm, (float)sample.co2_ppm);
 }
 

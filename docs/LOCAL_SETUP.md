@@ -38,6 +38,10 @@ The firmware reads `sdkconfig.credentials` at compile time through a generated p
 idf.py -C espidf reconfigure build
 ```
 
+At runtime, Wi-Fi settings are loaded through the `runtime_config` component. It
+keeps compatibility with the existing MicroLink NVS Wi-Fi keys and uses
+`sdkconfig.credentials` only as the build-time fallback.
+
 Flash and monitor, replacing the serial port as needed:
 
 ```bash
@@ -67,8 +71,12 @@ Storage behavior:
 - After wall time is verified by SNTP, aggregate buckets use Unix epoch-aligned
   10-minute boundaries. Before time is verified, the firmware still closes
   approximate 10-minute buckets from ESP32 uptime and marks them
-  `time_verified=false`; after time sync, pending unverified records are
-  reconciled back to epoch buckets and marked `time_reconciled=true`.
+  `time_verified=false`; after time sync, the active uptime bucket is closed
+  before new synced samples enter an epoch bucket. Pending unverified records
+  are reconciled back to epoch buckets gradually and marked
+  `time_reconciled=true`.
+- API/export records include `time_quality`: `synced_epoch`,
+  `reconciled_from_uptime`, or `unsynced_uptime`.
 - Aggregate `count` values are 5-second unified frames, not raw 1-second sensor
   reads. A full 10-minute bucket is normally about 120 frames; smaller counts
   mean startup/reboot, a partial active bucket, sensor warm-up, or missed fields.
@@ -82,6 +90,13 @@ idf.py -C espidf -p /dev/ttyACM0 erase-flash flash monitor
 ```
 
 `erase-flash` clears NVS and the `data` partition, including the MicroLink/Tailscale machine identity and stored aggregate records. If the Tailscale auth key is one-time use, generate a fresh reusable or ephemeral auth key before rebuilding after an erase.
+
+To reset only the stored aggregate records while preserving NVS credentials and
+MicroLink identity, erase the `data` partition region from `espidf/partitions.csv`:
+
+```bash
+python -m esptool --chip esp32s3 -p /dev/ttyACM0 erase_region 0x850000 0x7B0000
+```
 
 SPS30 wiring defaults:
 - Sensor UART RX on ESP32-S3: `GPIO16`
@@ -102,8 +117,8 @@ Shared I2C sensor addresses:
 - SGP41: `0x59`
 
 The web page is static HTML/CSS/JS served by the ESP32. Chart rendering and UI
-updates run in the requesting browser. The ESP32 samples SPS30 and SHT45 data,
-keeps a small in-memory history ring, and returns JSON.
+updates run in the requesting browser. The ESP32 samples SPS30, SHT45, BMP581,
+SCD41, and SGP41 data, keeps a small in-memory history ring, and returns JSON.
 
 Current verification:
 - `idf.py -C espidf build` completed successfully.
@@ -114,8 +129,8 @@ Current verification:
 - SPS30, SHT45, BMP581, SCD41, and SGP41 were verified through `/api/metrics`;
   all five report `measuring` after startup and sensor conditioning completes.
 - `/api/data` exposes flash-backed 10-minute aggregates plus the current active
-  bucket, including `time_verified`, `time_reconciled`, and `end_uptime_ms` for
-  bucket provenance.
+  bucket, including `time_verified`, `time_reconciled`, `time_quality`, and
+  `end_uptime_ms` for bucket provenance.
 - The mobile dashboard was checked with an iPhone 15 browser viewport after
   flashing. The pressure card fits `1016.x hPa`, pressure chart ticks render
   fully, and pressure chart values are displayed in hPa.

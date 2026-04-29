@@ -178,6 +178,9 @@ esp_err_t i2c_bus_write_reg(uint8_t address, uint8_t reg, const uint8_t *data,
     if (err != ESP_OK) {
         return err;
     }
+    if (!data && len > 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
     if (len > 31) {
         return ESP_ERR_INVALID_SIZE;
     }

@@ -36,8 +36,8 @@ idf_component_register(
     REQUIRES
         data_store
         driver
-        microlink
         nvs_flash
+        runtime_config
         sensor_service
         tailnet_service
         time_service

@@ -142,10 +142,10 @@
     function niceStep(range){let raw=range/3,p=Math.pow(10,Math.floor(Math.log10(raw||1))),n=raw/p;return (n<=1?1:n<=2?2:n<=5?5:10)*p}
     function yBounds(vals){let min=Math.min(...vals),max=Math.max(...vals),range=max-min;if(!Number.isFinite(range))return{min:0,max:10,step:5};let pad=Math.max(range*.25,range<2?.5:1),lo=min-pad,hi=max+pad,step=niceStep(hi-lo);lo=Math.floor(lo/step)*step;hi=Math.ceil(hi/step)*step;if(lo<0&&min>=0)lo=0;if(hi<=lo)hi=lo+step*3;return{min:lo,max:hi,step}}
     function axisLabel(v,step){return Math.abs(step)<1?v.toFixed(1):(Math.abs(v)>=10?String(Math.round(v)):v.toFixed(1))}
-    function hasValue(p,s){return p&&Number.isFinite(p[s.key])&&(!s.field||(p.field_mask&s.field))}
+    function hasValue(p,s){return p&&Number.isFinite(p[s.key])&&(!s.count||p[s.count]>0)}
     function seriesValue(p,s){return p[s.key]*(s.scale||1)}
     function statKey(s,kind){return s[kind+'Key']||s.key.replace(/_avg$/, '_'+kind)}
-    function hasStatValue(p,s,kind){const k=statKey(s,kind);return p&&Number.isFinite(p[k])&&(!s.field||(p.field_mask&s.field))}
+    function hasStatValue(p,s,kind){const k=statKey(s,kind);return p&&Number.isFinite(p[k])&&(!s.count||p[s.count]>0)}
     function statValue(p,s,kind){return p[statKey(s,kind)]*(s.scale||1)}
     function alphaColor(hex,a){let m=/^#?([0-9a-f]{6})$/i.exec(hex);if(!m)return hex;let n=parseInt(m[1],16);return'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'}
     function detailPoints(){

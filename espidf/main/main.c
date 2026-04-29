@@ -13,24 +13,21 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "pm_credentials.h"
+#include "runtime_config.h"
 #include "sensor_service.h"
 #include "tailnet_service.h"
 #include "time_service.h"
 #include "web_server.h"
 #include "wifi_station.h"
 
-#include "ml_config_httpd.h"
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include <string.h>
 
 static const char *TAG = "app";
 
 #define BOARD_POWER_ON_GPIO 15
 
 static wifi_station_config_t wifi_config;
-static ml_config_wifi_list_t wifi_list;
 static char wifi_ip[16];
 
 static void board_init(void) {
@@ -43,42 +40,6 @@ static void board_init(void) {
     };
     gpio_config(&cfg);
     gpio_set_level(BOARD_POWER_ON_GPIO, 1);
-}
-
-static void add_wifi_network(wifi_station_config_t *config,
-                             const char *ssid,
-                             const char *password) {
-    if (!config || !ssid || !ssid[0] ||
-        config->network_count >= WIFI_STATION_MAX_NETWORKS) {
-        return;
-    }
-
-    wifi_network_t *network = &config->networks[config->network_count++];
-    strlcpy(network->ssid, ssid, sizeof(network->ssid));
-    strlcpy(network->password, password ? password : "", sizeof(network->password));
-}
-
-static void load_wifi_config(wifi_station_config_t *config) {
-    memset(config, 0, sizeof(*config));
-
-    memset(&wifi_list, 0, sizeof(wifi_list));
-    wifi_list.active_idx = 0xFF;
-    if (ml_config_get_wifi_list(&wifi_list) && wifi_list.count > 1) {
-        for (uint8_t i = 0; i < wifi_list.count; i++) {
-            add_wifi_network(config, wifi_list.entries[i].ssid, wifi_list.entries[i].pass);
-        }
-        ESP_LOGI(TAG, "Wi-Fi multi-SSID config: %u networks", (unsigned)config->network_count);
-        return;
-    }
-
-    char ssid[33] = PM_WIFI_SSID;
-    char password[65] = PM_WIFI_PASSWORD;
-    if (ml_config_get_nvs_wifi(ssid, sizeof(ssid), password, sizeof(password))) {
-        ESP_LOGI(TAG, "using NVS Wi-Fi: %s", ssid);
-    } else {
-        ESP_LOGI(TAG, "using build-time Wi-Fi: %s", ssid);
-    }
-    add_wifi_network(config, ssid, password);
 }
 
 static const char *device_name(void) {
@@ -103,7 +64,7 @@ void app_main(void) {
              (unsigned long)esp_get_free_heap_size(),
              (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-    load_wifi_config(&wifi_config);
+    runtime_config_load_wifi(&wifi_config, PM_WIFI_SSID, PM_WIFI_PASSWORD);
     ESP_ERROR_CHECK(station_start(&wifi_config));
     ESP_ERROR_CHECK(station_wait_connected(portMAX_DELAY));
     time_service_start();

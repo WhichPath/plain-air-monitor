@@ -18,6 +18,7 @@ static const char *TAG = "data_store";
 #define DATA_FLASH_SECTOR_SIZE 4096u
 #define DATA_TIME_FLAG_VERIFIED   (1u << 0)
 #define DATA_TIME_FLAG_RECONCILED (1u << 1)
+#define DATA_RECONCILE_RECORDS_PER_SAMPLE 4u
 
 typedef struct {
     float avg;
@@ -92,6 +93,7 @@ static uint32_t record_capacity;
 static uint32_t record_count;
 static uint32_t write_slot;
 static uint32_t next_seq = 1;
+static bool has_unverified_records;
 
 static void scan_partition_locked(void);
 
@@ -246,6 +248,22 @@ static bool flash_record_time_verified(const flash_data_record_t *record) {
            (record->time_flags == 0 && record->end_epoch_ms > 0);
 }
 
+static bool flash_record_needs_reconcile(const flash_data_record_t *record) {
+    return !flash_record_time_verified(record) && record->end_uptime_ms > 0;
+}
+
+static bool scan_has_unverified_records_locked(void) {
+    for (uint32_t i = 0; i < record_count; i++) {
+        flash_data_record_t record;
+        if (slot_read(record_index[i].slot, &record) &&
+            record_valid(&record) &&
+            flash_record_needs_reconcile(&record)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void active_reset(int64_t end_epoch_ms,
                          int64_t end_uptime_ms,
                          bool time_verified,
@@ -372,6 +390,9 @@ static void append_record_locked(void) {
             (write_slot + record_capacity - 1) % record_capacity;
         record_count++;
     }
+    if (flash_record_needs_reconcile(&record)) {
+        has_unverified_records = true;
+    }
 
     ESP_LOGI(TAG, "data saved: seq=%lu end_epoch=%lld end_uptime=%lld frames=%u fields=0x%x verified=%d",
              (unsigned long)record.seq,
@@ -441,8 +462,13 @@ static void invalidate_slot(uint32_t slot) {
     }
 }
 
-static void reconcile_unverified_records_locked(void) {
+static void reconcile_unverified_records_locked(uint32_t max_records) {
+    if (!has_unverified_records || max_records == 0) {
+        return;
+    }
+
     uint32_t converted = 0;
+    bool stopped_by_limit = false;
     for (uint32_t i = 0; i < record_count;) {
         uint32_t slot = record_index[i].slot;
         flash_data_record_t record;
@@ -450,14 +476,19 @@ static void reconcile_unverified_records_locked(void) {
             remove_index_at(i);
             continue;
         }
-        if (flash_record_time_verified(&record) || record.end_uptime_ms <= 0) {
+        if (!flash_record_needs_reconcile(&record)) {
             i++;
             continue;
+        }
+        if (converted >= max_records) {
+            stopped_by_limit = true;
+            break;
         }
 
         int64_t estimated_epoch_ms = 0;
         if (!time_service_uptime_to_epoch_ms(record.end_uptime_ms,
                                              &estimated_epoch_ms)) {
+            has_unverified_records = true;
             break;
         }
 
@@ -482,6 +513,8 @@ static void reconcile_unverified_records_locked(void) {
         ESP_LOGI(TAG, "reconciled %lu unverified data records after time sync",
                  (unsigned long)converted);
     }
+    has_unverified_records = stopped_by_limit ||
+                             scan_has_unverified_records_locked();
 }
 
 static void scan_partition_locked(void) {
@@ -491,6 +524,7 @@ static void scan_partition_locked(void) {
 
     uint32_t max_seq = 0;
     uint32_t max_slot = 0;
+    has_unverified_records = false;
     for (uint32_t slot = 0; slot < record_capacity; slot++) {
         flash_data_record_t record;
         if (!slot_read(slot, &record)) {
@@ -502,6 +536,9 @@ static void scan_partition_locked(void) {
         record_count++;
         record_index[record_count - 1].seq = record.seq;
         record_index[record_count - 1].slot = slot;
+        if (flash_record_needs_reconcile(&record)) {
+            has_unverified_records = true;
+        }
         if (record.seq >= max_seq) {
             max_seq = record.seq;
             max_slot = slot;
@@ -583,22 +620,16 @@ void data_store_add_sample(const sensor_sample_t *sample, void *user_data) {
     int64_t sample_epoch_ms = 0;
     bool time_verified = time_service_uptime_to_epoch_ms(sample->timestamp_ms,
                                                         &sample_epoch_ms);
-    if (time_verified) {
-        reconcile_unverified_records_locked();
-        if (active.frame_count > 0 && !active.time_verified &&
-            active.end_uptime_ms > 0) {
-            int64_t active_epoch_ms = 0;
-            if (time_service_uptime_to_epoch_ms(active.end_uptime_ms,
-                                                &active_epoch_ms)) {
-                active.end_epoch_ms = bucket_end_epoch_ms(active_epoch_ms);
-                active.time_verified = true;
-                active.time_reconciled = true;
-            }
-        }
-    }
-
     int64_t bucket_end = time_verified ? bucket_end_epoch_ms(sample_epoch_ms) : 0;
     int64_t uptime_bucket_end = bucket_end_uptime_ms(sample->timestamp_ms);
+    if (time_verified) {
+        if (active.frame_count > 0 && !active.time_verified) {
+            append_record_locked();
+            active_reset(bucket_end, uptime_bucket_end, true, false);
+        }
+        reconcile_unverified_records_locked(DATA_RECONCILE_RECORDS_PER_SAMPLE);
+    }
+
     bool bucket_changed = false;
     if (active.frame_count == 0) {
         active_reset(bucket_end, uptime_bucket_end, time_verified, false);

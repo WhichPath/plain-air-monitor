@@ -610,6 +610,29 @@ esp_err_t microlink_get_peer_info(const microlink_t *ml, int index, microlink_pe
     return ESP_OK;
 }
 
+esp_err_t microlink_warm_peer(microlink_t *ml, uint32_t peer_vpn_ip) {
+    if (!ml || peer_vpn_ip == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!microlink_is_connected(ml)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ml_wg_mgr_send_cmm(ml, peer_vpn_ip);
+    return ml_wg_mgr_trigger_handshake(ml, peer_vpn_ip);
+}
+
+bool microlink_get_transport_status(const microlink_t *ml,
+                                    microlink_transport_status_t *out) {
+    if (!ml || !out) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    out->derp_connected = ml->derp.connected;
+    out->derp_last_recv_ms = ml->derp.last_recv_ms;
+    return true;
+}
+
 /* ============================================================================
  * Send API
  * ========================================================================== */

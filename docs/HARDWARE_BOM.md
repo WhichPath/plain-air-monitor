@@ -88,8 +88,10 @@ No address conflict is expected with this set.
   10-minute bucket is normally about 120 frames. PM1 and PM4 are not persisted
   long-term.
 - If SNTP time is unavailable, aggregate buckets are temporarily aligned to
-  ESP32 uptime and marked unverified. After time sync, pending unverified records
-  are reconciled back to epoch-aligned 10-minute buckets.
+  ESP32 uptime and marked unverified. After time sync, the current uptime bucket
+  is closed before new synced samples start an epoch bucket, and pending
+  unverified records are reconciled gradually back to epoch-aligned 10-minute
+  buckets. API/export output labels this as `time_quality`.
 - SHT45 temperature/humidity feeds SGP41 compensation. BMP581 pressure feeds SCD41
   ambient pressure compensation when available.
 

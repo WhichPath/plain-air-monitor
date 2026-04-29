@@ -56,6 +56,11 @@ typedef struct {
     bool direct_path;           /* true if communicating via direct UDP */
 } microlink_peer_info_t;
 
+typedef struct {
+    bool derp_connected;
+    uint64_t derp_last_recv_ms;
+} microlink_transport_status_t;
+
 /* Connection state */
 typedef enum {
     ML_STATE_IDLE = 0,
@@ -166,6 +171,17 @@ int microlink_get_peer_count(const microlink_t *ml);
  * @return ESP_OK if valid index
  */
 esp_err_t microlink_get_peer_info(const microlink_t *ml, int index, microlink_peer_info_t *info);
+
+/**
+ * @brief Proactively send discovery and WireGuard handshake traffic to a peer
+ */
+esp_err_t microlink_warm_peer(microlink_t *ml, uint32_t peer_vpn_ip);
+
+/**
+ * @brief Get transport health counters without exposing internal state layout
+ */
+bool microlink_get_transport_status(const microlink_t *ml,
+                                    microlink_transport_status_t *out);
 
 /**
  * @brief Send UDP data to a peer by VPN IP

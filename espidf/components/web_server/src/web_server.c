@@ -30,6 +30,36 @@ extern const uint8_t bosch_logo_svg_end[] asm("_binary_bosch_logo_svg_end");
 #define MS_PER_DAY (24LL * 60LL * 60LL * 1000LL)
 #define OTA_RECV_BUF_SIZE 4096
 
+static const char *time_quality_name(bool verified, bool reconciled) {
+    if (!verified) {
+        return "unsynced_uptime";
+    }
+    return reconciled ? "reconciled_from_uptime" : "synced_epoch";
+}
+
+static void json_escape_copy(char *out, size_t out_size, const char *in) {
+    if (!out || out_size == 0) {
+        return;
+    }
+    if (!in) {
+        in = "";
+    }
+
+    size_t pos = 0;
+    for (; *in && pos + 1 < out_size; in++) {
+        if ((*in == '"' || *in == '\\') && pos + 2 < out_size) {
+            out[pos++] = '\\';
+            out[pos++] = *in;
+        } else if ((unsigned char)*in >= 0x20) {
+            out[pos++] = *in;
+        }
+    }
+    out[pos] = '\0';
+}
+
+static int format_record_json(char *buf, size_t size, const char *prefix,
+                              const data_record_t *record);
+
 static void reboot_task(void *arg) {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(1500));
@@ -81,6 +111,16 @@ static esp_err_t handler_metrics(httpd_req_t *req) {
     sensor_status_t sensor_status;
     sensor_service_get_status(&sensor_status);
 
+    char device_json[96];
+    char wifi_ip_json[32];
+    char vpn_ip_json[32];
+    char tailnet_state_json[32];
+    json_escape_copy(device_json, sizeof(device_json), device_name);
+    json_escape_copy(wifi_ip_json, sizeof(wifi_ip_json), wifi_ip);
+    json_escape_copy(vpn_ip_json, sizeof(vpn_ip_json), tailnet_status.vpn_ip);
+    json_escape_copy(tailnet_state_json, sizeof(tailnet_state_json),
+                     tailnet_status.state);
+
     uint32_t stored_records = 0;
     uint32_t active_samples = 0;
     float active_pm25 = 0.0f;
@@ -113,10 +153,10 @@ static esp_err_t handler_metrics(httpd_req_t *req) {
         "\"data\":{\"stored\":%lu,\"active_frames\":%lu,\"active_pm25\":%.2f,"
         "\"history_days\":%.2f},"
         "\"latest\":",
-        device_name,
-        wifi_ip,
-        tailnet_status.vpn_ip,
-        tailnet_status.state,
+        device_json,
+        wifi_ip_json,
+        vpn_ip_json,
+        tailnet_state_json,
         tailnet_status.peer_count,
         (long long)(esp_timer_get_time() / 1000),
         (unsigned long)esp_get_free_heap_size(),
@@ -224,6 +264,8 @@ static esp_err_t handler_history(httpd_req_t *req) {
     httpd_resp_sendstr_chunk(req, "{\"interval_ms\":5000,\"samples\":[");
 
     uint16_t count = sensor_service_get_history_count();
+    uint16_t emitted = 0;
+    esp_err_t err = ESP_OK;
     for (uint16_t i = 0; i < count; i++) {
         sensor_history_point_t point;
         if (!sensor_service_get_history_point(i, &point)) {
@@ -239,7 +281,7 @@ static esp_err_t handler_history(httpd_req_t *req) {
                          "\"has_temperature\":%s,\"has_humidity\":%s,"
                          "\"has_pressure\":%s,\"has_co2\":%s,"
                          "\"has_voc_index\":%s,\"has_nox_index\":%s}",
-                         i ? "," : "",
+                         emitted ? "," : "",
                          (long long)point.timestamp_ms,
                          point.pm1_0,
                          point.pm2_5,
@@ -256,13 +298,24 @@ static esp_err_t handler_history(httpd_req_t *req) {
                          point.has_co2 ? "true" : "false",
                          point.has_voc_index ? "true" : "false",
                          point.has_nox_index ? "true" : "false");
-        if (n > 0) {
-            httpd_resp_send_chunk(req, item, n);
+        if (n <= 0 || n >= (int)sizeof(item)) {
+            err = ESP_FAIL;
+            break;
         }
+        err = httpd_resp_send_chunk(req, item, n);
+        if (err != ESP_OK) {
+            break;
+        }
+        emitted++;
     }
 
-    httpd_resp_sendstr_chunk(req, "]}");
-    return httpd_resp_send_chunk(req, NULL, 0);
+    if (err == ESP_OK) {
+        err = httpd_resp_sendstr_chunk(req, "]}");
+    }
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(req, NULL, 0);
+    }
+    return err;
 }
 
 #define DATA_API_MAX_RECORDS 1008u
@@ -313,6 +366,7 @@ static esp_err_t handler_data(httpd_req_t *req) {
                      "\"returned\":%lu,"
                      "\"active\":{\"end_epoch_ms\":%lld,\"end_uptime_ms\":%lld,"
                      "\"time_verified\":%s,\"time_reconciled\":%s,"
+                     "\"time_quality\":\"%s\","
                      "\"frame_count\":%u,\"field_mask\":%u,"
                      "\"pm2_5_avg\":%.2f,\"pm2_5_min\":%.2f,\"pm2_5_max\":%.2f,\"pm2_5_count\":%u,"
                      "\"pm10_0_avg\":%.2f,\"pm10_0_min\":%.2f,\"pm10_0_max\":%.2f,\"pm10_0_count\":%u,"
@@ -331,6 +385,8 @@ static esp_err_t handler_data(httpd_req_t *req) {
                      (long long)active.end_uptime_ms,
                      active.time_verified ? "true" : "false",
                      active.time_reconciled ? "true" : "false",
+                     time_quality_name(active.time_verified,
+                                       active.time_reconciled),
                      active.frame_count,
                      active.field_mask,
                      active.pm2_5.avg, active.pm2_5.min, active.pm2_5.max, active.pm2_5.count,
@@ -363,34 +419,8 @@ static esp_err_t handler_data(httpd_req_t *req) {
         data_store_unlock();
 
         char item[1536];
-        n = snprintf(item, sizeof(item),
-                     "%s{\"seq\":%lu,\"end_epoch_ms\":%lld,\"end_uptime_ms\":%lld,"
-                     "\"time_verified\":%s,\"time_reconciled\":%s,"
-                     "\"frame_count\":%u,\"field_mask\":%u,"
-                     "\"pm2_5_avg\":%.2f,\"pm2_5_min\":%.2f,\"pm2_5_max\":%.2f,\"pm2_5_count\":%u,"
-                     "\"pm10_0_avg\":%.2f,\"pm10_0_min\":%.2f,\"pm10_0_max\":%.2f,\"pm10_0_count\":%u,"
-                     "\"temperature_avg\":%.2f,\"temperature_min\":%.2f,\"temperature_max\":%.2f,\"temperature_count\":%u,"
-                     "\"humidity_avg\":%.2f,\"humidity_min\":%.2f,\"humidity_max\":%.2f,\"humidity_count\":%u,"
-                     "\"pressure_avg\":%.2f,\"pressure_min\":%.2f,\"pressure_max\":%.2f,\"pressure_count\":%u,"
-                     "\"co2_avg\":%.2f,\"co2_min\":%.2f,\"co2_max\":%.2f,\"co2_count\":%u,"
-                     "\"voc_index_avg\":%.2f,\"voc_index_min\":%.2f,\"voc_index_max\":%.2f,\"voc_index_count\":%u,"
-                     "\"nox_index_avg\":%.2f,\"nox_index_min\":%.2f,\"nox_index_max\":%.2f,\"nox_index_count\":%u}",
-                     emitted ? "," : "",
-                     (unsigned long)record.seq,
-                     (long long)record.end_epoch_ms,
-                     (long long)record.end_uptime_ms,
-                     record.time_verified ? "true" : "false",
-                     record.time_reconciled ? "true" : "false",
-                     record.frame_count,
-                     record.field_mask,
-                     record.pm2_5.avg, record.pm2_5.min, record.pm2_5.max, record.pm2_5.count,
-                     record.pm10_0.avg, record.pm10_0.min, record.pm10_0.max, record.pm10_0.count,
-                     record.temperature.avg, record.temperature.min, record.temperature.max, record.temperature.count,
-                     record.humidity.avg, record.humidity.min, record.humidity.max, record.humidity.count,
-                     record.pressure.avg, record.pressure.min, record.pressure.max, record.pressure.count,
-                     record.co2.avg, record.co2.min, record.co2.max, record.co2.count,
-                     record.voc_index.avg, record.voc_index.min, record.voc_index.max, record.voc_index.count,
-                     record.nox_index.avg, record.nox_index.min, record.nox_index.max, record.nox_index.count);
+        n = format_record_json(item, sizeof(item), emitted ? "," : "",
+                               &record);
         if (n <= 0 || n >= (int)sizeof(item)) {
             return ESP_FAIL;
         }
@@ -456,6 +486,7 @@ static int format_record_json(char *buf, size_t size, const char *prefix,
     return snprintf(buf, size,
                     "%s{\"seq\":%lu,\"end_epoch_ms\":%lld,\"end_uptime_ms\":%lld,"
                     "\"time_verified\":%s,\"time_reconciled\":%s,"
+                    "\"time_quality\":\"%s\","
                     "\"frame_count\":%u,\"field_mask\":%u,"
                     "\"pm2_5_avg\":%.2f,\"pm2_5_min\":%.2f,\"pm2_5_max\":%.2f,\"pm2_5_count\":%u,"
                     "\"pm10_0_avg\":%.2f,\"pm10_0_min\":%.2f,\"pm10_0_max\":%.2f,\"pm10_0_count\":%u,"
@@ -471,6 +502,8 @@ static int format_record_json(char *buf, size_t size, const char *prefix,
                     (long long)record->end_uptime_ms,
                     record->time_verified ? "true" : "false",
                     record->time_reconciled ? "true" : "false",
+                    time_quality_name(record->time_verified,
+                                      record->time_reconciled),
                     record->frame_count,
                     record->field_mask,
                     record->pm2_5.avg, record->pm2_5.min, record->pm2_5.max, record->pm2_5.count,
@@ -485,7 +518,7 @@ static int format_record_json(char *buf, size_t size, const char *prefix,
 
 static int format_record_csv(char *buf, size_t size, const data_record_t *record) {
     return snprintf(buf, size,
-                    "%lu,%lld,%lld,%u,%u,%u,%u,"
+                    "%lu,%lld,%lld,%u,%u,%s,%u,%u,"
                     "%.2f,%.2f,%.2f,%u,"
                     "%.2f,%.2f,%.2f,%u,"
                     "%.2f,%.2f,%.2f,%u,"
@@ -499,6 +532,8 @@ static int format_record_csv(char *buf, size_t size, const data_record_t *record
                     (long long)record->end_uptime_ms,
                     record->time_verified ? 1u : 0u,
                     record->time_reconciled ? 1u : 0u,
+                    time_quality_name(record->time_verified,
+                                      record->time_reconciled),
                     record->frame_count,
                     record->field_mask,
                     record->pm2_5.avg, record->pm2_5.min, record->pm2_5.max, record->pm2_5.count,
@@ -567,7 +602,7 @@ static esp_err_t handler_export(httpd_req_t *req) {
     } else {
         httpd_resp_set_type(req, "text/csv; charset=utf-8");
         err = httpd_resp_sendstr_chunk(req,
-            "seq,end_epoch_ms,end_uptime_ms,time_verified,time_reconciled,frame_count,field_mask,"
+            "seq,end_epoch_ms,end_uptime_ms,time_verified,time_reconciled,time_quality,frame_count,field_mask,"
             "pm2_5_avg,pm2_5_min,pm2_5_max,pm2_5_count,"
             "pm10_0_avg,pm10_0_min,pm10_0_max,pm10_0_count,"
             "temperature_avg,temperature_min,temperature_max,temperature_count,"
@@ -777,14 +812,26 @@ esp_err_t web_server_start(const web_server_config_t *config) {
         .user_ctx = NULL,
     };
 
-    httpd_register_uri_handler(server, &root);
-    httpd_register_uri_handler(server, &metrics);
-    httpd_register_uri_handler(server, &hist);
-    httpd_register_uri_handler(server, &data);
-    httpd_register_uri_handler(server, &export);
-    httpd_register_uri_handler(server, &ota);
-    httpd_register_uri_handler(server, &sensirion_logo);
-    httpd_register_uri_handler(server, &bosch_logo);
+    const httpd_uri_t *handlers[] = {
+        &root,
+        &metrics,
+        &hist,
+        &data,
+        &export,
+        &ota,
+        &sensirion_logo,
+        &bosch_logo,
+    };
+    for (size_t i = 0; i < sizeof(handlers) / sizeof(handlers[0]); i++) {
+        err = httpd_register_uri_handler(server, handlers[i]);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "HTTP handler registration failed for %s: %s",
+                     handlers[i]->uri, esp_err_to_name(err));
+            httpd_stop(server);
+            server = NULL;
+            return err;
+        }
+    }
 
     ESP_LOGI(TAG, "HTTP dashboard listening on port 80");
     return ESP_OK;

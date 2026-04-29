@@ -6,7 +6,6 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "microlink.h"
-#include "microlink_internal.h"
 #include "wifi_station.h"
 #include <string.h>
 
@@ -143,8 +142,7 @@ static void peer_warm_task(void *arg) {
             for (int i = 0; i < peer_count; i++) {
                 microlink_peer_info_t info;
                 if (microlink_get_peer_info(ml, i, &info) == ESP_OK && info.vpn_ip != 0) {
-                    ml_wg_mgr_send_cmm(ml, info.vpn_ip);
-                    ml_wg_mgr_trigger_handshake(ml, info.vpn_ip);
+                    (void)microlink_warm_peer(ml, info.vpn_ip);
                     vTaskDelay(pdMS_TO_TICKS(200));
                 }
             }
@@ -216,7 +214,9 @@ static void health_task(void *arg) {
         }
         not_connected_since_ms = 0;
 
-        if (!ml->derp.connected) {
+        microlink_transport_status_t transport = {0};
+        (void)microlink_get_transport_status(ml, &transport);
+        if (!transport.derp_connected) {
             if (derp_down_since_ms == 0) {
                 derp_down_since_ms = now_ms;
             } else if (now_ms - derp_down_since_ms >= TAILNET_NOT_CONNECTED_REBIND_MS) {
@@ -226,8 +226,8 @@ static void health_task(void *arg) {
         }
         derp_down_since_ms = 0;
 
-        if (ml->derp.last_recv_ms != 0 &&
-            now_ms - ml->derp.last_recv_ms >= TAILNET_DERP_STALE_MS) {
+        if (transport.derp_last_recv_ms != 0 &&
+            now_ms - transport.derp_last_recv_ms >= TAILNET_DERP_STALE_MS) {
             request_rebind("DERP receive watchdog stale", now_ms);
         }
     }

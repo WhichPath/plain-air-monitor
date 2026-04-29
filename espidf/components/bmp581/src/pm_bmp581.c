@@ -113,24 +113,27 @@ esp_err_t pm_bmp581_init(void) {
         bool has_valid_chip_id = false;
         esp_err_t probe_err = i2c_bus_probe(addresses[i], pdMS_TO_TICKS(100));
         if (probe_err != ESP_OK) {
-            ESP_LOGW(TAG, "BMP581 address 0x%02x did not ACK: %s",
+            ESP_LOGD(TAG, "BMP581 address 0x%02x did not ACK: %s",
                      addresses[i], esp_err_to_name(probe_err));
         } else {
             esp_err_t read_err = i2c_bus_read_reg(addresses[i],
                                                   BMP5_REG_CHIP_ID, &chip_id,
                                                   1, pdMS_TO_TICKS(100));
             if (read_err == ESP_OK) {
-                ESP_LOGI(TAG, "BMP581 address 0x%02x chip-id register=0x%02x",
+                ESP_LOGD(TAG, "BMP581 address 0x%02x chip-id register=0x%02x",
                          addresses[i], chip_id);
                 has_valid_chip_id = chip_id_valid(chip_id);
             } else {
-                ESP_LOGW(TAG, "BMP581 address 0x%02x chip-id read failed: %s",
+                ESP_LOGD(TAG, "BMP581 address 0x%02x chip-id read failed: %s",
                          addresses[i], esp_err_to_name(read_err));
             }
         }
         init_dev(addresses[i]);
         rslt = bmp5_init(&s_dev);
         if (rslt == BMP5_E_POWER_UP && has_valid_chip_id) {
+            /* Some BMP581 modules keep the Bosch driver POR bit set even after
+             * NVM is ready; a valid chip id plus clean NVM status is sufficient
+             * for this board and avoids rejecting the sensor during boot. */
             uint8_t nvm_status = 0;
             int8_t status_rslt = bmp5_get_regs(BMP5_REG_STATUS, &nvm_status,
                                                1, &s_dev);
@@ -139,9 +142,8 @@ esp_err_t pm_bmp581_init(void) {
                 !(nvm_status & BMP5_INT_NVM_ERR)) {
                 s_dev.chip_id = chip_id;
                 rslt = BMP5_OK;
-                ESP_LOGW(TAG,
-                         "BMP581 addr=0x%02x accepted after cleared POR status; nvm_status=0x%02x",
-                         addresses[i], nvm_status);
+                ESP_LOGD(TAG, "BMP581 addr=0x%02x accepted after POR status check",
+                         addresses[i]);
             }
         }
         if (rslt == BMP5_OK) {
