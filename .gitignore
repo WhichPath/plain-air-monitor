@@ -1,8 +1,88 @@
+# ── PlatformIO / build ────────────────────────────────────────────────
+.platformio/
+.pio/
+.b/
+build/
+managed_components/
+dependencies.lock
+
+# ── ESP-IDF tooling (local bootstrap) ────────────────────────────────
 .tools/
 espidf/build/
-reference/upstream/
 espidf/sdkconfig
 espidf/sdkconfig.old
+
+# ── credentials / secrets ────────────────────────────────────────────
 espidf/sdkconfig.credentials
-*.pyc
+espidf/sdkconfig.credentials.local
+*.pem
+*.key
+
+# ── Local reference repos (each is its own git checkout) ─────────────
+reference/upstream/
+
+# ── Archive directories ──────────────────────────────────────────────
+archive-*/
+
+# ── Logo and brand assets (not for distribution) ─────────────────────
+reference/Bosch-logo.svg
+reference/Sensirion_Logo_Green.png
+
+# ── Build artifacts and temporary files ───────────────────────────────
+*.o
+*.d
+*.gcno
+*.gcda
+*.gcov
+*.dSYM/
+*.su
+*.idb
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.a
+*.so
+*.dylib
+*.exe
+*.out
+*.app
+*.i
+*.s
+*.dSYM
+
+# ── IDE and editor files ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Python cache ─────────────────────────────────────────────────────
 __pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+
+# ── Node.js (if used) ───────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Logs ─────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Temporary files ──────────────────────────────────────────────────
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
