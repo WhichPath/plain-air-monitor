@@ -13,23 +13,31 @@ A microclimate monitoring system based on LilyGO T-Display-S3, using ESP-IDF fra
 
 **Hardware platform:** LilyGO T-Display-S3 (ESP32-S3 with 16MB Flash, 8MB PSRAM)
 
+**Built-in display:** compact local status screen for live readings, network state,
+time sync, and display brightness.
+
+## Display Preview
+
+![T-Display-S3 local display preview](docs/images/display-preview.png)
+
 ## Project Goals
 
 ### Short-term Goals
-- Utilize the built-in TFT display on T-Display-S3 to create an information display interface
-- Show real-time sensor data, network status, and system information on the screen
-- Implement touch interaction for switching display modes
+- Refine local LCD layouts and alternate display modes
+- Tune on-device interaction after enclosure and mounting are finalized
 
 ### Long-term Goals
 - Design and 3D print a custom enclosure to house all components
 - Create a complete, deployable air quality monitoring station
 - Add support for additional environmental sensors
-- Implement data logging and historical analysis features
+- Extend historical analysis and diagnostics
 
 ## Features
 
 - **Tailscale Integration**: Secure remote access via Tailscale network
 - **Web Dashboard**: Browser-based real-time data visualization
+- **Local LCD Display**: On-device live PM2.5, PM10, temperature, humidity, CO2, VOC, NOx, and connection status
+- **GPIO14 Brightness Button**: Cycles the built-in display through off, 30%, 70%, and 100%
 - **OTA Updates**: Over-the-air firmware updates via web interface
 - **Data Storage**: 10-minute aggregated data stored in flash memory
 - **Dual OTA**: Safe firmware updates with ESP-IDF rollback after startup validation
@@ -83,7 +91,7 @@ idf.py -C espidf build
 
 ## API Endpoints
 
-- **Web Dashboard**: `http://<ESP32_TAILSCALE_IP>/` (Port 80)
+- **Web Dashboard**: `http://<ESP32_LAN_OR_TAILSCALE_IP>/` (Port 80)
 - **Metrics API**: `/api/metrics`
 - **History API**: `/api/history`
 - **Aggregate Data**: `/api/data`
@@ -97,6 +105,7 @@ plain-air-monitor/
 │   ├── components/            # ESP-IDF components
 │   │   ├── bmp581/           # BMP581 pressure sensor driver
 │   │   ├── data_store/       # Data storage management
+│   │   ├── display_service/  # Built-in LCD status display
 │   │   ├── i2c_bus/          # I2C bus management
 │   │   ├── microlink/        # Tailscale integration
 │   │   ├── runtime_config/   # Runtime configuration

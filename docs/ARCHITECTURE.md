@@ -5,7 +5,7 @@ New application components intentionally do not use a project-wide prefix.
 
 ## Runtime Flow
 
-1. `main` initializes board power, NVS, storage, sensor sampling, Wi-Fi, HTTP, and tailnet.
+1. `main` initializes board power, display, NVS, storage, sensor sampling, Wi-Fi, HTTP, and tailnet.
 2. `sensor_service` samples the active sensor drivers and keeps recent RAM history.
 3. `data_store` receives samples through a callback and persists 10-minute aggregates to the `data` flash partition.
 4. `runtime_config` loads runtime Wi-Fi configuration from the existing NVS schema
@@ -13,6 +13,7 @@ New application components intentionally do not use a project-wide prefix.
 5. `wifi_station` owns station mode, reconnects, multi-network fallback, IP, and RSSI.
 6. `tailnet_service` owns MicroLink startup, tailnet peer warm-up, and UDP diagnostics.
 7. `web_server` serves the static dashboard and JSON APIs from service APIs.
+8. `display_service` owns the local LilyGO T-Display-S3 LCD backend and small on-device status view.
 
 ## Current Component Boundaries
 
@@ -60,9 +61,14 @@ New application components intentionally do not use a project-wide prefix.
 - `web_server` serves the dashboard, JSON APIs, CSV/JSON data export, and the
   browser OTA upload endpoint. `web_server/dashboard.html` is embedded as a
   normal asset instead of escaped C text.
+- `display_service` owns the LilyGO T-Display-S3 ST7789/I80 panel setup,
+  backlight enablement, and a compact local status screen built from public
+  service APIs. The GPIO14 side button cycles the display backlight through
+  off, 30%, 70%, and 100%.
 
 ## Known Follow-Up Work
 
 - Consider a formal sensor-driver registration API if more sensors are added so
   `sensor_service` does not keep accumulating direct driver knowledge.
-- Add a display service stub before implementing the LilyGO T-Display-S3 UI.
+- Continue refining local LCD layouts and interaction once the enclosure and
+  normal viewing distance are known.

@@ -13,23 +13,30 @@
 
 **硬件平台：** LilyGO T-Display-S3 (ESP32-S3, 16MB Flash, 8MB PSRAM)
 
+**内置显示屏：** 紧凑的本机状态界面，用于显示实时读数、网络状态、时间同步和亮度状态。
+
+## 显示预览
+
+![T-Display-S3 本机显示预览](docs/images/display-preview.png)
+
 ## 项目目标
 
 ### 近期目标
-- 利用T-Display-S3自带的TFT显示屏创建信息显示界面
-- 在屏幕上显示实时传感器数据、网络状态和系统信息
-- 实现触摸交互以切换显示模式
+- 继续优化本机 LCD 布局和备用显示模式
+- 在外壳和安装方式确定后调整板载交互
 
 ### 远期目标
 - 设计并3D打印定制外壳以容纳所有组件
 - 创建完整的、可部署的空气质量监测站
 - 添加对更多环境传感器的支持
-- 实现数据记录和历史分析功能
+- 扩展历史数据分析和运行诊断能力
 
 ## 功能特性
 
 - **Tailscale集成**：通过Tailscale网络实现安全的远程访问
 - **Web仪表板**：基于浏览器的实时数据可视化
+- **本机 LCD 显示**：在设备上显示 PM2.5、PM10、温湿度、CO2、VOC、NOx 和连接状态
+- **GPIO14 亮度按钮**：轮换内置显示屏的关闭、30%、70% 和 100% 亮度
 - **OTA更新**：通过Web界面进行固件空中升级
 - **数据存储**：10分钟聚合数据存储在闪存中
 - **双OTA槽**：固件更新使用 ESP-IDF rollback，并在启动检查通过后确认新固件
@@ -83,7 +90,7 @@ idf.py -C espidf build
 
 ## API端点
 
-- **Web仪表板**: `http://<ESP32_TAILSCALE_IP>/` (端口80)
+- **Web仪表板**: `http://<ESP32_LAN_OR_TAILSCALE_IP>/` (端口80)
 - **指标API**: `/api/metrics`
 - **历史API**: `/api/history`
 - **聚合数据**: `/api/data`
@@ -97,6 +104,7 @@ plain-air-monitor/
 │   ├── components/            # ESP-IDF组件
 │   │   ├── bmp581/           # BMP581气压传感器驱动
 │   │   ├── data_store/       # 数据存储管理
+│   │   ├── display_service/  # 内置 LCD 状态显示
 │   │   ├── i2c_bus/          # I2C总线管理
 │   │   ├── microlink/        # Tailscale集成
 │   │   ├── runtime_config/   # 运行时配置

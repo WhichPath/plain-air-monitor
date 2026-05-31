@@ -7,6 +7,7 @@
  */
 
 #include "data_store.h"
+#include "display_service.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -93,6 +94,15 @@ static void confirm_ota_app_if_pending(void) {
 
 void app_main(void) {
     board_init();
+
+    display_service_config_t display_config = {
+        .device_name = device_name(),
+    };
+    esp_err_t display_err = display_service_start(&display_config);
+    if (display_err != ESP_OK) {
+        ESP_LOGE(TAG, "display service start failed: %s",
+                 esp_err_to_name(display_err));
+    }
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {

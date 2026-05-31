@@ -35,6 +35,7 @@ idf_component_register(
     INCLUDE_DIRS "." "${PM_GENERATED_DIR}"
     REQUIRES
         data_store
+        display_service
         driver
         nvs_flash
         runtime_config
