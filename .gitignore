@@ -48,7 +48,6 @@ reference/Sensirion_Logo_Green.png
 *.out
 *.app
 *.i
-*.s
 *.dSYM
 
 # ── IDE and editor files ─────────────────────────────────────────────

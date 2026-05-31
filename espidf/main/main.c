@@ -10,6 +10,7 @@
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "pm_credentials.h"
@@ -26,6 +27,7 @@
 static const char *TAG = "app";
 
 #define BOARD_POWER_ON_GPIO 15
+#define OTA_VALIDATE_TIMEOUT_MS (3 * 60 * 1000)
 
 static wifi_station_config_t wifi_config;
 static char wifi_ip[16];
@@ -46,6 +48,49 @@ static const char *device_name(void) {
     return PM_DEVICE_NAME[0] ? PM_DEVICE_NAME : "microlink-sensor";
 }
 
+#ifdef CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+static bool running_app_pending_verify(void) {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state;
+    esp_err_t err = esp_ota_get_state_partition(running, &ota_state);
+    return err == ESP_OK && ota_state == ESP_OTA_IMG_PENDING_VERIFY;
+}
+
+static void ota_validate_watchdog_task(void *arg) {
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(OTA_VALIDATE_TIMEOUT_MS));
+    if (running_app_pending_verify()) {
+        ESP_LOGE(TAG, "OTA app was not marked valid within %u ms; rebooting for rollback",
+                 OTA_VALIDATE_TIMEOUT_MS);
+        esp_restart();
+    }
+    vTaskDelete(NULL);
+}
+#endif
+
+static void start_ota_validate_watchdog_if_pending(void) {
+#ifdef CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    if (running_app_pending_verify()) {
+        xTaskCreate(ota_validate_watchdog_task, "ota_validate", 2048, NULL, 5,
+                    NULL);
+    }
+#endif
+}
+
+static void confirm_ota_app_if_pending(void) {
+#ifdef CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    if (!running_app_pending_verify()) {
+        return;
+    }
+    esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "OTA app marked valid after startup checks");
+    } else {
+        ESP_LOGE(TAG, "failed to mark OTA app valid: %s", esp_err_to_name(err));
+    }
+#endif
+}
+
 void app_main(void) {
     board_init();
 
@@ -55,6 +100,7 @@ void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    start_ota_validate_watchdog_if_pending();
 
     ESP_ERROR_CHECK(data_store_init());
     ESP_ERROR_CHECK(sensor_service_start(data_store_add_sample, NULL));
@@ -86,6 +132,7 @@ void app_main(void) {
         .wifi_tx_power_dbm = 13,
     };
     ESP_ERROR_CHECK(tailnet_service_start(&tailnet_config));
+    confirm_ota_app_if_pending();
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(30000));

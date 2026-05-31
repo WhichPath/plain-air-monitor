@@ -26,9 +26,14 @@ New application components intentionally do not use a project-wide prefix.
   seconds, and emits one 5-second unified frame for application consumers.
 - The partition table uses two 4MB OTA app slots plus `otadata`; browser uploads
   write the inactive slot and switch boot only after ESP-IDF image validation.
+  ESP-IDF rollback is enabled, so a newly booted OTA image must complete startup
+  checks and mark itself valid or reboot within 3 minutes so the bootloader
+  rolls back to the previous slot.
 - `data_store` owns an append-only flash ring in the `data` partition. NVS is
   left for configuration, Wi-Fi, and MicroLink keys/peer cache.
 - Flash-backed aggregate records store one aligned 10-minute bucket per record.
+  Record version 5 covers the whole 256-byte flash record with CRC; version 4
+  records remain readable for existing deployed data.
   After SNTP validates wall time, bucket boundaries are anchored to Unix epoch
   10-minute boundaries and the record's start can be derived from
   `end_epoch_ms - DATA_RECORD_WINDOW_MS`.

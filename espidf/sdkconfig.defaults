@@ -44,6 +44,10 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 # Watchdog (extended for TLS handshakes)
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
 
+# OTA rollback. A newly uploaded app must finish startup checks and explicitly
+# mark itself valid; otherwise the bootloader rolls back to the previous slot.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
 # Partition table. T-Display-S3 has 16MB flash; keep NVS for config/keys and
 # use a large data partition for append-only sensor aggregates.
 CONFIG_PARTITION_TABLE_CUSTOM=y

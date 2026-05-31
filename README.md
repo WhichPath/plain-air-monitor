@@ -32,7 +32,7 @@ A microclimate monitoring system based on LilyGO T-Display-S3, using ESP-IDF fra
 - **Web Dashboard**: Browser-based real-time data visualization
 - **OTA Updates**: Over-the-air firmware updates via web interface
 - **Data Storage**: 10-minute aggregated data stored in flash memory
-- **Dual OTA**: Safe firmware updates with rollback capability
+- **Dual OTA**: Safe firmware updates with ESP-IDF rollback after startup validation
 
 ## Hardware Requirements
 
@@ -56,11 +56,10 @@ A microclimate monitoring system based on LilyGO T-Display-S3, using ESP-IDF fra
 
 1. Copy the credentials example file:
    ```bash
-   cd espidf
-   cp sdkconfig.credentials.example sdkconfig.credentials
+   cp espidf/sdkconfig.credentials.example espidf/sdkconfig.credentials
    ```
 
-2. Edit `sdkconfig.credentials` with your actual values:
+2. Edit `espidf/sdkconfig.credentials` with your actual values:
    ```
    CONFIG_ML_WIFI_SSID="your-wifi-ssid"
    CONFIG_ML_WIFI_PASSWORD="your-wifi-password"
@@ -69,9 +68,8 @@ A microclimate monitoring system based on LilyGO T-Display-S3, using ESP-IDF fra
 
 3. Build and flash:
    ```bash
-   idf.py set-target esp32s3
-   idf.py build
-   idf.py flash monitor
+   idf.py -C espidf build
+   idf.py -C espidf flash monitor
    ```
 
 ### Local Development Setup

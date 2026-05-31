@@ -32,7 +32,7 @@
 - **Web仪表板**：基于浏览器的实时数据可视化
 - **OTA更新**：通过Web界面进行固件空中升级
 - **数据存储**：10分钟聚合数据存储在闪存中
-- **双OTA槽**：安全的固件更新，支持回滚
+- **双OTA槽**：固件更新使用 ESP-IDF rollback，并在启动检查通过后确认新固件
 
 ## 硬件要求
 
@@ -56,11 +56,10 @@
 
 1. 复制凭证示例文件：
    ```bash
-   cd espidf
-   cp sdkconfig.credentials.example sdkconfig.credentials
+   cp espidf/sdkconfig.credentials.example espidf/sdkconfig.credentials
    ```
 
-2. 编辑 `sdkconfig.credentials` 文件，填入您的实际值：
+2. 编辑 `espidf/sdkconfig.credentials` 文件，填入您的实际值：
    ```
    CONFIG_ML_WIFI_SSID="your-wifi-ssid"
    CONFIG_ML_WIFI_PASSWORD="your-wifi-password"
@@ -69,9 +68,8 @@
 
 3. 编译并烧录：
    ```bash
-   idf.py set-target esp32s3
-   idf.py build
-   idf.py flash monitor
+   idf.py -C espidf build
+   idf.py -C espidf flash monitor
    ```
 
 ### 本地开发设置

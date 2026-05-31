@@ -13,7 +13,8 @@ static const char *TAG = "data_store";
 
 #define DATA_PARTITION_LABEL "data"
 #define DATA_RECORD_MAGIC 0x51444132u
-#define DATA_RECORD_VERSION 4u
+#define DATA_RECORD_VERSION 5u
+#define DATA_RECORD_VERSION_LEGACY 4u
 #define DATA_RECORD_SIZE 256u
 #define DATA_FLASH_SECTOR_SIZE 4096u
 #define DATA_TIME_FLAG_VERIFIED   (1u << 0)
@@ -97,9 +98,16 @@ static bool has_unverified_records;
 
 static void scan_partition_locked(void);
 
-static uint32_t record_crc(const flash_data_record_t *record) {
+static uint32_t record_crc_legacy(const flash_data_record_t *record) {
     return esp_rom_crc32_le(UINT32_MAX, (const uint8_t *)record,
                             offsetof(flash_data_record_t, crc32));
+}
+
+static uint32_t record_crc(const flash_data_record_t *record) {
+    flash_data_record_t copy = *record;
+    copy.crc32 = 0;
+    return esp_rom_crc32_le(UINT32_MAX, (const uint8_t *)&copy,
+                            sizeof(copy));
 }
 
 static void public_stat_from_flash(const flash_field_stat_t *in,
@@ -132,11 +140,21 @@ static void flash_to_public_record(const flash_data_record_t *in,
 }
 
 static bool record_valid(const flash_data_record_t *record) {
-    return record->magic == DATA_RECORD_MAGIC &&
-           record->version == DATA_RECORD_VERSION &&
-           record->size == DATA_RECORD_SIZE &&
-           record->frame_count > 0 &&
-           record->crc32 == record_crc(record);
+    if (record->magic != DATA_RECORD_MAGIC ||
+        record->size != DATA_RECORD_SIZE ||
+        record->frame_count == 0) {
+        return false;
+    }
+
+    if (record->version == DATA_RECORD_VERSION) {
+        return record->crc32 == record_crc(record);
+    }
+
+    if (record->version == DATA_RECORD_VERSION_LEGACY) {
+        return record->crc32 == record_crc_legacy(record);
+    }
+
+    return false;
 }
 
 static bool record_erased(const flash_data_record_t *record) {
@@ -373,6 +391,7 @@ static void append_record_locked(void) {
         .time_flags = (active.time_verified ? DATA_TIME_FLAG_VERIFIED : 0) |
                       (active.time_reconciled ? DATA_TIME_FLAG_RECONCILED : 0),
     };
+    record.crc32 = 0;
     record.crc32 = record_crc(&record);
 
     esp_err_t err = slot_write(write_slot, &record);
@@ -408,7 +427,10 @@ static bool append_flash_record_locked(flash_data_record_t *record) {
         return false;
     }
 
+    record->version = DATA_RECORD_VERSION;
+    record->size = DATA_RECORD_SIZE;
     record->seq = next_seq++;
+    record->crc32 = 0;
     record->crc32 = record_crc(record);
 
     uint32_t slot = write_slot;

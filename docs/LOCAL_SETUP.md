@@ -25,6 +25,18 @@ source scripts/idf-env.sh
 idf.py -C espidf build
 ```
 
+If `scripts/idf-env.sh` reports a missing ESP-IDF tool, refresh the local tool
+install and then source the environment again:
+
+```bash
+IDF_TOOLS_PATH="$PWD/.tools/espressif" .tools/esp-idf/install.sh
+source scripts/idf-env.sh
+```
+
+If a new `sdkconfig.defaults` option does not appear in an older local
+`espidf/sdkconfig`, delete the ignored generated `espidf/sdkconfig` and rebuild
+so ESP-IDF regenerates it from defaults and credentials.
+
 Set credentials for real device bring-up:
 
 ```bash
@@ -82,7 +94,10 @@ Storage behavior:
   mean startup/reboot, a partial active bucket, sensor warm-up, or missed fields.
 
 The firmware uses a custom 16MB OTA partition table: 256KB NVS, 8KB `otadata`,
-two 4MB OTA app slots, and a 0x7B0000-byte `data` partition. When moving from
+two 4MB OTA app slots, and a 0x7B0000-byte `data` partition. ESP-IDF rollback is
+enabled; a newly uploaded app is marked valid only after NVS, storage, Wi-Fi,
+HTTP, and tailnet service startup checks pass. If those checks do not complete
+within 3 minutes, the app reboots so the bootloader can roll back. When moving from
 the earlier single-app layout to this layout, erase flash once:
 
 ```bash
