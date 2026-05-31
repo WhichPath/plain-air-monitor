@@ -38,14 +38,13 @@ New application components intentionally do not use a project-wide prefix.
   After SNTP validates wall time, bucket boundaries are anchored to Unix epoch
   10-minute boundaries and the record's start can be derived from
   `end_epoch_ms - DATA_RECORD_WINDOW_MS`.
-- If sampling starts before wall time is verified, `data_store` still uses the
-  ESP32 monotonic uptime clock to close approximate 10-minute buckets. These
-  records carry `time_verified=false` and `end_uptime_ms`. Once SNTP later
-  verifies time, `data_store` first closes any active uptime bucket, then starts
-  a fresh epoch-aligned bucket for new samples. Pending unverified records are
-  reconciled gradually by mapping their uptime bucket end back to epoch time,
-  snapping to the real 10-minute bucket boundary, and marking the rewritten
-  record with `time_verified=true` and `time_reconciled=true`.
+- If sampling starts before wall time is verified, `data_store` may keep an
+  uptime-aligned active bucket for live summaries, but it does not persist that
+  bucket to flash. Once SNTP verifies time, the unverified active bucket is
+  dropped and new samples start in a fresh epoch-aligned bucket. This prefers
+  small gaps over exporting records with a reordered or ambiguous timeline.
+- On startup, `data_store` indexes only verified epoch records and ignores any
+  legacy records that would make the exported sequence non-monotonic.
 - API/export records expose `time_quality`:
   `synced_epoch`, `reconciled_from_uptime`, or `unsynced_uptime`.
 - Each field stores avg/min/max/count. Counts are the number of 5-second unified
